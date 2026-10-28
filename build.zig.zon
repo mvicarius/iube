@@ -1,0 +1,19 @@
+.{
+    .name = .iube,
+    .version = "0.1.0",
+    .fingerprint = 0x5f4351dc18c71089, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .dvui = .{
+            .url = "https://github.com/david-vanderson/dvui/archive/c0d195385bac3ce97b0eccf1293e4d73934135d1.tar.gz",
+            .hash = "dvui-0.6.0-dev-AQFJmVOFBAHGG3beOgA6ODE6IfhoZRWCXSwtW7oTbDqD",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "hypr",
+        "README.md",
+    },
+}
