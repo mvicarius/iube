@@ -23,24 +23,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // The dev shell supplies libraries via NIX_LDFLAGS/LD_LIBRARY_PATH. Bake
-    // those paths into RUNPATH so the built binary also runs outside
-    // `nix develop` (e.g. from a Hyprland keybind).
-    if (b.graph.environ_map.get("NIX_LDFLAGS")) |ldflags| {
-        var it = std.mem.tokenizeAny(u8, ldflags, " \t\n");
-        while (it.next()) |flag| {
-            if (!std.mem.startsWith(u8, flag, "-L")) continue;
-            const dir = flag[2..];
-            if (dir.len > 0) exe.root_module.addRPath(b.graph.cwdRelativePath(dir));
-        }
-    }
-    if (b.graph.environ_map.get("LD_LIBRARY_PATH")) |library_path| {
-        var it = std.mem.tokenizeScalar(u8, library_path, ':');
-        while (it.next()) |dir| {
-            if (dir.len > 0) exe.root_module.addRPath(b.graph.cwdRelativePath(dir));
-        }
-    }
-
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

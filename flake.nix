@@ -5,48 +5,50 @@
 
   outputs = { self, nixpkgs }:
     let
-      system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
+      systems = [ "x86_64-linux" "aarch64-linux" "riscv64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+      forAllPkgs = nixpkgs.lib.genAttrs systems
+        (system: import nixpkgs { inherit system; });
 
-      # SDL3 (built by dvui) uses these backends; the dev shell also supplies
-      # the runtime libraries for the resulting executable.
-      libs = with pkgs; [
-        wayland
-        wayland-protocols
-        libdecor
-        libxkbcommon
+      makeDerivation = pkgs: pkgs.stdenv.mkDerivation (finalAttrs: {
+        pname = "iube";
+        version = "0.1.0";
+        src = ./.;
 
-        libx11
-        libxcursor
-        libxext
-        libxfixes
-        libxi
-        libxinerama
-        libxrandr
-        libxrender
+        nativeBuildInputs = [ pkgs.zig ];  # activates the zig hook
 
-        libGL
-        libGLX
-        mesa
-        vulkan-loader
+        buildInputs = with pkgs; [
+          libGL libxi
+          wayland wayland-protocols libdecor libxkbcommon
+        ];
 
-        alsa-lib
-        libpulseaudio
-        libusb1
-        udev
-        dbus
-
-        freetype
-        harfbuzz
-        fontconfig
-        libpng
-      ];
+        zigBuildFlags = [ "--release=fast" ];
+        zigCheckFlags = finalAttrs.zigBuildFlags;
+      });
     in
     {
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [ pkgs.zig pkgs.zls pkgs.pkg-config ];
-        buildInputs = libs;
-        LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libs;
+      packages = forAllSystems (system: {
+        iube    = makeDerivation forAllPkgs.${system};
+        default = self.packages.${system}.iube;
+      });
+
+      overlays.default = final: prev:
+        nixpkgs.lib.genAttrs systems
+          (system: { iube = makeDerivation forAllPkgs.${system}; });
+
+      devShells = forAllSystems (system: {
+      default = forAllPkgs.${system}.mkShell {
+        packages = [ forAllPkgs.${system}.zig forAllPkgs.${system}.zls forAllPkgs.${system}.pkg-config ];
+        buildInputs = with forAllPkgs.${system}; [
+          libGL libxi
+          wayland wayland-protocols libdecor libxkbcommon
+        ];
+        LD_LIBRARY_PATH = forAllPkgs.${system}.lib.makeLibraryPath (with forAllPkgs.${system}; [
+          libGL libxi
+          wayland wayland-protocols libdecor libxkbcommon
+        ]);
       };
+    });   
+
     };
-}
+}   

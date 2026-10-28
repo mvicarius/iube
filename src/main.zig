@@ -9,23 +9,28 @@ pub const std_options: std.Options = .{ .log_level = .warn };
 const window_width = 640;
 const window_height = 360;
 const margin = 16;
-const row_step: f32 = 42.0;
+const small_margin = 8;
+const gap = 4;
+const icon_size = 32;
+const row_step: f32 = icon_size + small_margin * 2 + gap;
 
 const extra_dark = dvui.Color{ .r = 0x02, .g = 0x05, .b = 0x07 };
 const dark = dvui.Color{ .r = 0x09, .g = 0x15, .b = 0x1d };
 const accent = dvui.Color{ .r = 0x08, .g = 0x5f, .b = 0x6c };
 const muted = dvui.Color{ .r = 0x5a, .g = 0x7a, .b = 0x82 };
 
-const AppEntry = struct {
-    name: []const u8,
-    exec: []const u8,
-    icon_path: []const u8,
-    icon_bytes: ?[]const u8 = null,
-    terminal: bool = false,
+const String = struct {
+    start: usize,
+    end: usize,
 };
 
 const AppList = struct {
-    items: std.ArrayList(AppEntry) = .empty,
+    buffer: std.ArrayList(u8) = .empty,
+    names: std.ArrayList(String) = .empty,
+    execs: std.ArrayList(String) = .empty,
+    icon_bytes: std.ArrayList(?String) = .empty,
+    terminal: std.ArrayList(bool) = .empty,
+    order: std.ArrayList(usize) = .empty,
     arena: std.heap.ArenaAllocator,
 
     fn init(gpa: std.mem.Allocator) AppList {
@@ -36,20 +41,58 @@ const AppList = struct {
         self.arena.deinit();
     }
 
-    fn allocator(self: *AppList) std.mem.Allocator {
-        return self.arena.allocator();
-    }
-
-    fn add(self: *AppList, entry: AppEntry) !void {
-        try self.items.append(self.allocator(), entry);
-    }
-
-    fn sortByName(self: *AppList) void {
-        std.mem.sort(AppEntry, self.items.items, {}, struct {
-            fn lessThan(_: void, a: AppEntry, b: AppEntry) bool {
-                return std.ascii.lessThanIgnoreCase(a.name, b.name);
+    fn addName(self: *AppList, name: []const u8) !void {
+        for (self.order.items, 0..) |n, i| {
+            const existing_name = self.names.items[n];
+            if (std.ascii.lessThanIgnoreCase(name, self.buffer.items[existing_name.start..existing_name.end])) {
+                try self.order.insert(self.arena.allocator(), i, self.names.items.len);
+                break;
             }
-        }.lessThan);
+        } else {
+            try self.order.append(self.arena.allocator(), self.names.items.len);
+        }
+
+        try self.names.append(
+            self.arena.allocator(),
+            .{ .start = self.buffer.items.len, .end = self.buffer.items.len + name.len },
+        );
+        try self.buffer.appendSlice(self.arena.allocator(), name);
+    }
+
+    fn getName(self: AppList, idx: usize) []const u8 {
+        const str = self.names.items[idx];
+        return self.buffer.items[str.start..str.end];
+    }
+
+    fn addExec(self: *AppList, exec: []const u8) !void {
+        try self.execs.append(
+            self.arena.allocator(),
+            .{ .start = self.buffer.items.len, .end = self.buffer.items.len + exec.len },
+        );
+        try self.buffer.appendSlice(self.arena.allocator(), exec);
+    }
+
+    fn getExec(self: AppList, idx: usize) []const u8 {
+        const str = self.execs.items[idx];
+        return self.buffer.items[str.start..str.end];
+    }
+
+    fn addIconBytes(self: *AppList, icon_bytes: ?[]const u8) !void {
+        if (icon_bytes) |bytes| {
+            try self.icon_bytes.append(
+                self.arena.allocator(),
+                .{ .start = self.buffer.items.len, .end = self.buffer.items.len + bytes.len },
+            );
+            try self.buffer.appendSlice(self.arena.allocator(), bytes);
+        } else {
+            try self.icon_bytes.append(self.arena.allocator(), null);
+        }
+    }
+
+    fn getIconBytes(self: AppList, idx: usize) ?[]const u8 {
+        if (self.icon_bytes.items[idx]) |bytes| {
+            return self.buffer.items[bytes.start..bytes.end];
+        } else return null;
     }
 };
 
@@ -73,67 +116,15 @@ fn sleepMs(sleep_io: std.Io, ms: i64) void {
     d.sleep(sleep_io) catch {};
 }
 
-pub fn main(init: std.process.Init) !void {
-    const on_hyprland = init.environ_map.get("HYPRLAND_INSTANCE_SIGNATURE") != null;
-    if (on_hyprland) {
-        _ = registerHyprlandRule(init.io, init.gpa);
-        // Hyprland applies `hyprctl eval` window rules asynchronously. Give
-        // the rule engine a moment before mapping the window.
-    }
-
-    io = init.io;
-    terminal_env = init.environ_map.get("TERMINAL");
-    apps = AppList.init(init.gpa);
-    defer apps.deinit();
-
-    var seen_bases: std.ArrayList([]const u8) = .empty;
-    defer seen_bases.deinit(init.gpa);
-
-    try addDataDir(init.io, init.gpa, &apps, &seen_bases, "/usr/share/");
-    try addDataDir(init.io, init.gpa, &apps, &seen_bases, "/run/current-system/sw/share/");
-
-    const xdg_home = init.environ_map.get("XDG_DATA_HOME") orelse "";
-    if (xdg_home.len > 0) {
-        try addDataDir(init.io, init.gpa, &apps, &seen_bases, xdg_home);
-    } else if (init.environ_map.get("HOME")) |home| {
-        var home_buffer: [4096]u8 = undefined;
-        if (std.fmt.bufPrint(&home_buffer, "{s}/.local/share", .{home})) |local_share| {
-            try addDataDir(init.io, init.gpa, &apps, &seen_bases, local_share);
-        } else |_| {}
-    }
-
-    if (init.environ_map.get("XDG_DATA_DIRS")) |data_dirs| {
-        var it = std.mem.tokenizeScalar(u8, data_dirs, ':');
-        while (it.next()) |dir| {
-            if (dir.len > 0) try addDataDir(init.io, init.gpa, &apps, &seen_bases, dir);
-        }
-    }
-
-    apps.sortByName();
-
-    visible_indices = try init.gpa.alloc(usize, apps.items.items.len);
-    defer init.gpa.free(visible_indices);
-
-    var backend = try SDLBackend.initWindow(.{
-        .io = init.io,
-        .environ_map = init.environ_map,
-        .size = .{ .w = window_width, .h = window_height },
-        .vsync = true,
-        .title = "iube",
-        .app = "iube",
-        .org = "dev.iube",
-        .persist_window_geometry = false,
-        .transparent = true,
-    });
-    defer backend.deinit();
-
-    const theme: dvui.Theme = .{
+pub const theme = theme: {
+    @setEvalBranchQuota(3023);
+    break :theme dvui.Theme{
         .name = "Adwaita Dark",
         .dark = true,
 
         .embedded_fonts = dvui.Theme.builtin.adwaita_dark.embedded_fonts,
 
-        .font_body = .find(.{ .family = "Vera Sans" }),
+        .font_body = .find(.{ .family = "Vera Sans", .size = dvui.Font.DefaultSize + 2 }),
         .font_heading = .find(.{ .family = "Vera Sans", .weight = .bold }),
         .font_title = .find(.{ .family = "Vera Sans", .size = dvui.Font.DefaultSize + 2 }),
         .font_mono = .find(.{ .family = "Vera Sans Mono" }),
@@ -173,6 +164,57 @@ pub fn main(init: std.process.Init) !void {
             .border = dvui.Color.red,
         },
     };
+};
+
+pub fn main(init: std.process.Init) !void {
+    const on_hyprland = init.environ_map.get("HYPRLAND_INSTANCE_SIGNATURE") != null;
+    if (on_hyprland) {
+        _ = registerHyprlandRule(init.io, init.gpa);
+    }
+
+    io = init.io;
+    terminal_env = init.environ_map.get("TERMINAL");
+    apps = AppList.init(init.gpa);
+    defer apps.deinit();
+
+    var seen_bases: std.ArrayList([]const u8) = .empty;
+    defer seen_bases.deinit(init.gpa);
+
+    try addDataDir(init.io, init.gpa, &seen_bases, "/usr/share/");
+    try addDataDir(init.io, init.gpa, &seen_bases, "/run/current-system/sw/share/");
+
+    const xdg_home = init.environ_map.get("XDG_DATA_HOME") orelse "";
+    if (xdg_home.len > 0) {
+        try addDataDir(init.io, init.gpa, &seen_bases, xdg_home);
+    } else if (init.environ_map.get("HOME")) |home| {
+        var home_buffer: [4096]u8 = undefined;
+        if (std.fmt.bufPrint(&home_buffer, "{s}/.local/share", .{home})) |local_share| {
+            try addDataDir(init.io, init.gpa, &seen_bases, local_share);
+        } else |_| {}
+    }
+
+    if (init.environ_map.get("XDG_DATA_DIRS")) |data_dirs| {
+        var it = std.mem.tokenizeScalar(u8, data_dirs, ':');
+        while (it.next()) |dir| {
+            if (dir.len > 0) try addDataDir(init.io, init.gpa, &seen_bases, dir);
+        }
+    }
+
+    visible_indices = try init.gpa.alloc(usize, apps.names.items.len);
+    defer init.gpa.free(visible_indices);
+
+    var backend = try SDLBackend.initWindow(.{
+        .io = init.io,
+        .environ_map = init.environ_map,
+        .size = .{ .w = window_width, .h = window_height },
+        .vsync = true,
+        .title = "iube",
+        .app = "iube",
+        .org = "dev.iube",
+        .persist_window_geometry = false,
+        .transparent = true,
+    });
+    defer backend.deinit();
 
     var win = try dvui.Window.init(@src(), init.gpa, backend.backend(), .{
         .theme = theme,
@@ -193,8 +235,8 @@ pub fn main(init: std.process.Init) !void {
     }
     var interrupted = false;
 
-    // used time only startup time
-    window_open = false;
+    // used to time only startup time
+    //window_open = false;
 
     while (window_open) {
         const nstime = win.beginWait(interrupted);
@@ -250,6 +292,9 @@ pub fn main(init: std.process.Init) !void {
         const wait = win.waitTime(end_micros);
 
         interrupted = try backend.waitEventTimeout(wait);
+
+        // used to time only startup time plus first frame
+        //window_open = false;
     }
 }
 
@@ -259,7 +304,7 @@ fn uiFrame() void {
         .rect = win_rect,
         .background = true,
         .padding = .all(margin),
-        .corners = .all(10),
+        .corners = .all(margin),
         .border = .all(1),
     });
     defer root.deinit();
@@ -269,11 +314,10 @@ fn uiFrame() void {
         .placeholder = "Search for your application…",
     }, .{
         .expand = .horizontal,
-        .margin = .{ .x = 0, .y = 0, .w = 0, .h = 12 },
-        .padding = .all(8),
+        .margin = .{ .x = 0, .y = 0, .w = 0, .h = margin },
+        .padding = .all(small_margin),
         .color_fill = .{ .color = dark },
-        .corners = .all(6),
-        .font = .theme(.heading),
+        .corners = .all(small_margin),
     });
 
     const text_changed = te.text_changed;
@@ -289,9 +333,9 @@ fn uiFrame() void {
     defer scroll.deinit();
 
     visible_count = 0;
-    for (apps.items.items, 0..) |app, idx| {
-        if (!matchesQuery(app.name, query)) continue;
-        visible_indices[visible_count] = idx;
+    for (apps.order.items) |app| {
+        if (!matchesQuery(apps.getName(app), query)) continue;
+        visible_indices[visible_count] = app;
         visible_count += 1;
     }
 
@@ -313,13 +357,13 @@ fn uiFrame() void {
     }
 
     for (visible_indices[0..visible_count], 0..) |app_idx, show_idx| {
-        if (appRow(&apps.items.items[app_idx], app_idx, show_idx)) launch_index = app_idx;
+        if (appRow(app_idx, show_idx)) launch_index = app_idx;
     }
     enter_pressed = false;
 
     if (selected_index) |sel| {
         const top_limit = row_step * @as(f32, @floatFromInt(sel));
-        const bot_limit = top_limit - scroll.si.viewport.h + row_step - 4;
+        const bot_limit = top_limit - scroll.si.viewport.h + row_step;
 
         if (scroll.si.offset(.vertical) > top_limit) {
             scroll.si.scrollToOffset(.vertical, top_limit);
@@ -335,20 +379,23 @@ fn uiFrame() void {
     }
 }
 
-fn appRow(app: *const AppEntry, idx: usize, show_idx: usize) bool {
+fn appRow(idx: usize, show_idx: usize) bool {
     const src = @src();
     const row_id = dvui.parentGet().extendId(src, idx);
     const was_hovered = dvui.dataGet(null, row_id, "hover", bool) orelse false;
     const color = if (selected_index == show_idx) accent else if (was_hovered) dark.lighten(5) else dark;
 
+    const name = apps.getName(idx);
+    const icon_bytes = apps.getIconBytes(idx);
+
     var row = dvui.box(src, .{ .dir = .horizontal }, .{
         .id_extra = idx,
         .expand = .horizontal,
-        .padding = .{ .x = 8, .y = 6, .w = 8, .h = 6 },
-        .margin = .{ .x = 0, .y = 0, .w = 0, .h = 2 },
+        .padding = .all(small_margin),
+        .margin = .{ .x = 0, .y = 0, .w = 0, .h = gap },
         .background = true,
         .color_fill = .{ .color = color },
-        .corners = .all(6),
+        .corners = .all(small_margin),
     });
     defer row.deinit();
 
@@ -356,37 +403,36 @@ fn appRow(app: *const AppEntry, idx: usize, show_idx: usize) bool {
     const clicked = dvui.clicked(row.data(), .{ .hovered = &hovered });
     dvui.dataSet(null, row_id, "hover", hovered);
 
-    if (app.icon_bytes) |bytes| {
+    if (icon_bytes) |bytes| {
         _ = dvui.image(@src(), .{
-            .source = .{ .imageFile = .{ .bytes = bytes, .name = app.icon_path } },
+            .source = .{ .imageFile = .{ .bytes = bytes, .name = "icon" } },
             .shrink = .ratio,
         }, .{
             .id_extra = idx,
-            .min_size_content = .{ .w = 24, .h = 24 },
-            .max_size_content = .{ .w = 24, .h = 24 },
-            .margin = .{ .x = 0, .y = 0, .w = 10, .h = 0 },
+            .min_size_content = .{ .w = icon_size, .h = icon_size },
+            .max_size_content = .{ .w = icon_size, .h = icon_size },
+            .margin = .{ .x = 0, .y = 0, .w = small_margin, .h = 0 },
             .gravity_y = 0.5,
-            .label = .{ .text = app.name },
         });
     } else {
         var icon_box = dvui.box(@src(), .{ .dir = .horizontal }, .{
             .id_extra = idx,
-            .min_size_content = .{ .w = 24, .h = 24 },
-            .max_size_content = .{ .w = 24, .h = 24 },
+            .min_size_content = .{ .w = icon_size, .h = icon_size },
+            .max_size_content = .{ .w = icon_size, .h = icon_size },
             .background = true,
             .corners = .all(4),
-            .margin = .{ .x = 0, .y = 0, .w = 10, .h = 0 },
+            .margin = .{ .x = 0, .y = 0, .w = small_margin, .h = 0 },
             .gravity_y = 0.5,
         });
         defer icon_box.deinit();
-        dvui.label(@src(), "{s}", .{initial(app.name)}, .{
+        dvui.label(@src(), "{s}", .{initial(name)}, .{
             .gravity_x = 0.5,
             .gravity_y = 0.5,
             .color_text = .{ .color = muted },
         });
     }
 
-    dvui.labelNoFmt(@src(), app.name, .{}, .{
+    dvui.labelNoFmt(@src(), name, .{}, .{
         .expand = .horizontal,
         .gravity_y = 0.5,
         .id_extra = idx,
@@ -412,16 +458,15 @@ fn matchesQuery(haystack: []const u8, needle: []const u8) bool {
 }
 
 fn launch(idx: usize) void {
-    if (apps.items.items.len <= idx) return;
-    const app = apps.items.items[idx];
-    if (app.exec.len == 0) return;
+    if (apps.names.items.len <= idx) return;
+    const exec = apps.getExec(idx);
 
     var command_buffer: [8192]u8 = undefined;
-    const command = stripFieldCodes(app.exec, &command_buffer);
+    const command = stripFieldCodes(exec, &command_buffer);
 
-    if (app.terminal) {
+    if (apps.terminal.items[idx]) {
         if (!launchInTerminal(command)) {
-            std.log.err("no terminal emulator found for '{s}'", .{app.name});
+            std.log.err("no terminal emulator found for '{s}'", .{apps.getName(idx)});
         }
         return;
     }
@@ -594,7 +639,6 @@ fn registerHyprlandRule(run_io: std.Io, gpa: std.mem.Allocator) bool {
 fn addDataDir(
     scan_io: std.Io,
     gpa: std.mem.Allocator,
-    list: *AppList,
     seen: *std.ArrayList([]const u8),
     base: []const u8,
 ) !void {
@@ -615,10 +659,13 @@ fn addDataDir(
         if (std.mem.eql(u8, existing, normalized)) return;
     }
 
-    const owned = try list.allocator().dupe(u8, normalized);
+    var dir_arena = std.heap.ArenaAllocator.init(gpa);
+    defer dir_arena.deinit();
+
+    const owned = try dir_arena.allocator().dupe(u8, normalized);
     try seen.append(gpa, owned);
 
-    scanApps(scan_io, gpa, owned, list) catch |err| {
+    scanApps(scan_io, &dir_arena, owned) catch |err| {
         std.log.warn("failed to scan {s}: {s}", .{ owned, @errorName(err) });
     };
 }
@@ -639,7 +686,6 @@ const IconIndex = struct {
 fn buildIconIndex(
     scan_io: std.Io,
     gpa: std.mem.Allocator,
-    list: *AppList,
     base_path: []const u8,
 ) !IconIndex {
     var index: IconIndex = .{ .map = std.StringHashMap(IconChoice).init(gpa) };
@@ -654,24 +700,22 @@ fn buildIconIndex(
     var walker = dir.walk(gpa) catch return index;
     defer walker.deinit();
 
-    while (true) {
-        const maybe = walker.next(scan_io) catch return index;
-        const entry = maybe orelse break;
+    while (try walker.next(scan_io)) |entry| {
         if (entry.kind != .file and entry.kind != .sym_link) continue;
 
-        const basename = entry.basename;
-        if (!std.mem.endsWith(u8, basename, ".png")) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".png")) continue;
 
-        const name = basename[0 .. basename.len - 4];
+        const name = entry.basename[0 .. entry.basename.len - 4];
         const score = iconScore(entry.path);
 
         if (index.map.getPtr(name)) |choice| {
             if (score >= choice.score) continue;
-            choice.path = try std.fmt.allocPrint(list.allocator(), "{s}{s}", .{ icons_path, entry.path });
+            gpa.free(choice.path);
+            choice.path = try std.fmt.allocPrint(gpa, "{s}{s}", .{ icons_path, entry.path });
             choice.score = score;
         } else {
-            const key = try list.allocator().dupe(u8, name);
-            const path = try std.fmt.allocPrint(list.allocator(), "{s}{s}", .{ icons_path, entry.path });
+            const key = try apps.arena.allocator().dupe(u8, name);
+            const path = try std.fmt.allocPrint(gpa, "{s}{s}", .{ icons_path, entry.path });
             try index.map.put(key, .{ .path = path, .score = score });
         }
     }
@@ -679,20 +723,24 @@ fn buildIconIndex(
     return index;
 }
 
-fn scanApps(scan_io: std.Io, gpa: std.mem.Allocator, base_path: []const u8, list: *AppList) !void {
+fn scanApps(scan_io: std.Io, arena: *std.heap.ArenaAllocator, base_path: []const u8) !void {
     var path_buffer: [4096]u8 = undefined;
     const applications_path = std.fmt.bufPrint(&path_buffer, "{s}applications/", .{base_path}) catch return;
 
     var dir = std.Io.Dir.openDirAbsolute(scan_io, applications_path, .{ .iterate = true }) catch return;
     defer dir.close(scan_io);
 
-    var icon_index = try buildIconIndex(scan_io, gpa, list, base_path);
+    var icon_index = try buildIconIndex(scan_io, arena.allocator(), base_path);
     defer icon_index.deinit();
 
-    var walker = try dir.walk(gpa);
+    var walker = try dir.walk(arena.allocator());
     defer walker.deinit();
 
+    var file_arena = std.heap.ArenaAllocator.init(arena.allocator());
+    defer file_arena.deinit();
+
     while (try walker.next(scan_io)) |entry| {
+        defer _ = file_arena.reset(.retain_capacity);
         if (entry.kind != .file and entry.kind != .sym_link) continue;
         if (!std.mem.endsWith(u8, entry.basename, ".desktop")) continue;
 
@@ -705,8 +753,7 @@ fn scanApps(scan_io: std.Io, gpa: std.mem.Allocator, base_path: []const u8, list
         var name: []const u8 = "";
         var exec: []const u8 = "";
         var icon_name: []const u8 = "";
-        var hidden = false;
-        var no_display = false;
+        var skip = false;
         var terminal = false;
         var in_desktop_entry = false;
 
@@ -722,15 +769,14 @@ fn scanApps(scan_io: std.Io, gpa: std.mem.Allocator, base_path: []const u8, list
             if (!in_desktop_entry) continue;
 
             if (name.len == 0 and std.mem.startsWith(u8, line, "Name=")) {
-                name = try list.allocator().dupe(u8, line[5..]);
+                name = try file_arena.allocator().dupe(u8, line[5..]);
             } else if (exec.len == 0 and std.mem.startsWith(u8, line, "Exec=")) {
-                exec = try list.allocator().dupe(u8, line[5..]);
+                exec = try file_arena.allocator().dupe(u8, line[5..]);
             } else if (icon_name.len == 0 and std.mem.startsWith(u8, line, "Icon=")) {
-                icon_name = try list.allocator().dupe(u8, line[5..]);
-            } else if (std.mem.eql(u8, line, "Hidden=true")) {
-                hidden = true;
-            } else if (std.mem.eql(u8, line, "NoDisplay=true")) {
-                no_display = true;
+                icon_name = try file_arena.allocator().dupe(u8, line[5..]);
+            } else if (std.mem.eql(u8, line, "Hidden=true") or std.mem.eql(u8, line, "NoDisplay=true")) {
+                skip = true;
+                break;
             } else if (std.mem.eql(u8, line, "Terminal=true")) {
                 terminal = true;
             }
@@ -739,8 +785,17 @@ fn scanApps(scan_io: std.Io, gpa: std.mem.Allocator, base_path: []const u8, list
             else => std.log.warn("failed to read {s}: {s}", .{ entry.path, @errorName(err) }),
         }
 
-        if (hidden or no_display) continue;
+        if (skip) continue;
         if (name.len == 0 or exec.len == 0) continue;
+
+        var already_found = false;
+        for (0..apps.names.items.len) |i| {
+            if (std.mem.eql(u8, name, apps.getName(i))) {
+                already_found = true;
+                break;
+            }
+        }
+        if (already_found) continue;
 
         var icon_path: []const u8 = "";
         if (icon_name.len > 0 and icon_name[0] == '/') {
@@ -751,29 +806,26 @@ fn scanApps(scan_io: std.Io, gpa: std.mem.Allocator, base_path: []const u8, list
 
         var icon_bytes: ?[]const u8 = null;
         if (icon_path.len > 0) {
-            icon_bytes = std.Io.Dir.readFileAlloc(.cwd(), scan_io, icon_path, list.allocator(), .limited(256 * 1024)) catch null;
+            icon_bytes = std.Io.Dir.readFileAlloc(.cwd(), scan_io, icon_path, file_arena.allocator(), .limited(256 * 1024)) catch null;
         }
 
-        try list.add(.{
-            .name = name,
-            .exec = exec,
-            .icon_path = icon_path,
-            .icon_bytes = icon_bytes,
-            .terminal = terminal,
-        });
+        try apps.addName(name);
+        try apps.addExec(exec);
+        try apps.addIconBytes(icon_bytes);
+        try apps.terminal.append(apps.arena.allocator(), terminal);
     }
 }
 
 fn iconScore(path: []const u8) u32 {
     const hint = iconSizeHint(path);
     if (hint == 0) return 1000;
-    return @intCast(@abs(hint - 32));
+    return @intCast(@abs(hint - icon_size));
 }
 
 fn iconSizeHint(path: []const u8) i32 {
     var parts = std.mem.tokenizeScalar(u8, path, '/');
     while (parts.next()) |component| {
-        const x = std.mem.indexOfScalar(u8, component, 'x') orelse continue;
+        const x = std.mem.findScalar(u8, component, 'x') orelse continue;
         const left = std.fmt.parseInt(i32, component[0..x], 10) catch continue;
 
         var right_text = component[x + 1 ..];
