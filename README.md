@@ -1,9 +1,12 @@
 # iube
 
-A small application launcher for Wayland, built with
-[dvui](https://github.com/david-vanderson/dvui) and its SDL3 backend. It reads
-`.desktop` files, shows their names and PNG icons, filters as you type, and
-launches the selected command.
+A small application launcher for Wayland. It reads `.desktop` files, shows
+their names and PNG icons, filters as you type, and launches the selected
+command.
+
+The UI is written directly against Wayland and renders into `wl_shm` shared
+memory. There is no SDL, no GL, no dvui and no widget toolkit: the only
+libraries are `libwayland-client` and `libxkbcommon`.
 
 ## Build
 
@@ -18,59 +21,49 @@ Or:
 nix develop --command zig build run
 ```
 
-The first build compiles dvui and SDL3 from source, so it takes a while. Later
-builds are incremental.
+The build needs `wayland` and `libxkbcommon` development headers. The
+generated protocol bindings for `xdg-shell`, `wlr-layer-shell` and
+`cursor-shape` are checked into `src/protocol`, so `wayland-scanner` and
+`wayland-protocols` are not build dependencies.
 
-dvui and this project require Zig **0.17.0**. The flake tracks
-`nixos-unstable`, which currently ships that version.
+This project requires Zig **0.17.0**. The flake tracks `nixos-unstable`, which
+currently ships that version.
 
 ## Controls
 
 - Type to filter the list.
+- `Up` / `Down` select an entry, `Enter` launches it.
 - Click a row to launch it.
+- Mouse wheel scrolls the list.
 - Press `Esc` to close.
 
-## Floating window (read this)
+## Window behaviour
 
-dvui's SDL3 backend creates a **regular Wayland toplevel** (`xdg-shell`). It
-does not support `zwlr_layer_shell`, so it cannot create a layer-shell overlay.
+On compositors that support `zwlr_layer_shell_v1` (Hyprland, wlroots-based
+compositors), iube creates an **overlay layer surface** sized 640×360,
+centred on the focused output, with exclusive keyboard focus. No compositor
+configuration is required.
 
-On Hyprland, iube registers a runtime window rule named `iube-runtime` with
-`hyprctl eval` *before* creating its window. The rule floats, centres, pins,
-and sizes the window to 640×360, so running `iube` directly gives a floating
-launcher without editing any config. The rule is re-registered on every launch
-and is lost when Hyprland reloads or restarts (the next iube launch adds it
-again).
-
-The rule matches `class = "^(iube)$"` — dvui/SDL3 sets the Wayland app
-id/class to the binary name, `iube`. Matching the class matters: the title can
-arrive too late for the initial configure, which lets Hyprland tile the first
-frame.
-
-On Hyprland, the app maps one empty transparent frame before drawing the real
-UI, then waits for the rule's resize and SDL's scale change to settle. That is
-what prevents the oversized first frame on a second monitor with a different
-scale. On other compositors this settle is skipped and the window is a normal
-tiled toplevel.
-
-If you prefer config-managed rules, the equivalent rule is in
-[`hypr/iube.lua`](hypr/iube.lua), named `iube-config` so the app's runtime rule
-does not overwrite it. Add its contents to your Hyprland Lua config (for
-example `windows.lua` or via `require`).
-
-If you need true layer-shell behaviour (anchored surfaces, keyboard
-interactivity modes, always above fullscreen without compositor rules), a
-different window backend is required.
+On compositors without layer-shell support, iube falls back to a regular
+xdg-toplevel with a 640×360 min/max size. On Hyprland that fallback still
+registers a runtime rule named `iube-runtime` with `hyprctl eval` before the
+window is mapped, so the toplevel floats and is centred. The equivalent
+config-managed rule is in [`hypr/iube.lua`](hypr/iube.lua), named
+`iube-config` so the app's runtime rule does not overwrite it.
 
 ## Implementation notes
 
-- **Client size.** Hyprland maps a new toplevel tiled before applying the
-  float/size rule. iube commits one empty transparent frame, waits for the
-  rule's resize and SDL's scale change to settle, and only then draws the UI.
-  That keeps the first visible frame at 640×360, including on a second monitor
-  with a different scale.
+- **Rendering.** Every frame is composited by hand into a premultiplied
+  ARGB8888 `wl_shm` buffer: rounded rectangles with analytic antialiasing,
+  a built-in bitmap font, and PNG icons.
+- **HiDPI.** iube listens for `wl_surface.preferred_buffer_scale` and renders
+  at the compositor's preferred integer scale, so text and icons stay crisp.
+- **Font.** Text uses an embedded 8×16 VGA-derived bitmap font with Latin-1
+  coverage. There is no FreeType/HarfBuzz dependency. Characters outside the
+  font are rendered as `?`.
 - **Icons.** Only PNG icons are used. The scanner prefers the icon closest to
-  32 px and falls back to a coloured box with the app's initial.
+  32 px and falls back to a coloured box with the app's initial. PNGs are
+  decoded lazily with Zig's standard-library zlib decoder.
 - **Desktop entries.** It scans `/usr/share`, `/run/current-system/sw/share`,
   `XDG_DATA_DIRS`, and `XDG_DATA_HOME` (falling back to
   `~/.local/share`), ignoring `Hidden=true` / `NoDisplay=true`.
@@ -82,4 +75,8 @@ different window backend is required.
   handling); otherwise iube tries Ghostty, Kitty, Foot, Alacritty, WezTerm,
   XTerm, Konsole, GNOME Terminal, and `xdg-terminal-exec`. If no terminal can
   be started, iube reports an error instead of running the TUI app invisibly.
-  This is what makes entries such as `btop++` and `Neovim wrapper` show up.
+- **Input.** Keyboard handling uses the compositor-provided xkb keymap plus
+  `libxkbcommon`. Key repeat is implemented on the client, and mouse pointer
+  cursor shapes come from `cursor-shape-v1`. Text is appended at the end of
+  the query (backspace and `Ctrl+U` are supported); clipboard paste and IME
+  are not implemented.

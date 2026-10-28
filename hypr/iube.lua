@@ -1,13 +1,15 @@
--- iube: keep the launcher floating, centred, and pinned.
+-- iube: optional fallback rule for compositors without layer-shell support.
 --
--- Hyprland 0.55+ Lua config. The app registers its own runtime rule named
--- "iube-runtime" at startup via `hyprctl eval`, so this file is optional. Use
--- it if you want a rule before iube launches or one that survives a Hyprland
--- reload without relaunching the app. This file uses the distinct name
+-- When zwlr_layer_shell_v1 is available (Hyprland, wlroots compositors), iube
+-- creates a centred 640x360 overlay surface itself and this rule is not used.
+--
+-- On the xdg-toplevel fallback, the app registers a runtime rule named
+-- "iube-runtime" at startup via `hyprctl eval`. This file is for the case
+-- where you want an equivalent rule before iube launches, or one that survives
+-- a Hyprland reload without relaunching the app. It uses the distinct name
 -- "iube-config", so the app does not overwrite it.
 --
--- dvui's SDL3 backend sets the Wayland app id/class to "iube" (the binary
--- name). Match the class, not the title: the title can arrive too late for
+-- Match the class ("iube"), not the title: the title can arrive too late for
 -- the initial configure, leaving the first frame tiled.
 
 hl.window_rule({

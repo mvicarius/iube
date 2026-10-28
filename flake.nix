@@ -1,5 +1,5 @@
 {
-    description = "iube — a small Wayland application launcher built with dvui";
+    description = "iube — a small Wayland application launcher written against raw Wayland";
 
     inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -15,16 +15,11 @@
             version = "0.1.0";
             src = ./.;
 
-            nativeBuildInputs = [ pkgs.zig ];  # activates the zig hook
+            nativeBuildInputs = [ pkgs.zig pkgs.pkg-config ];  # activates the zig hook
 
             buildInputs = with pkgs; [
-                libGL libxi
-                wayland wayland-protocols libdecor libxkbcommon
+                wayland libxkbcommon
             ];
-
-            postPatch = ''
-                ln -s ${pkgs.callPackage ./deps.nix { }} "$ZIG_GLOBAL_CACHE_DIR/p"
-            '';
 
             zigBuildFlags = [ "--release=fast" ];
             zigCheckFlags = finalAttrs.zigBuildFlags;
@@ -42,14 +37,14 @@
 
             devShells = forAllSystems (system: {
             default = forAllPkgs.${system}.mkShell {
-                packages = [ forAllPkgs.${system}.zig forAllPkgs.${system}.zls forAllPkgs.${system}.pkg-config ];
+                packages = with forAllPkgs.${system}; [
+                    zig zls pkg-config
+                ];
                 buildInputs = with forAllPkgs.${system}; [
-                    libGL libxi
-                    wayland wayland-protocols libdecor libxkbcommon
+                    wayland libxkbcommon
                 ];
                 LD_LIBRARY_PATH = forAllPkgs.${system}.lib.makeLibraryPath (with forAllPkgs.${system}; [
-                    libGL libxi
-                    wayland wayland-protocols libdecor libxkbcommon
+                    wayland libxkbcommon
                 ]);
             };
         });   
