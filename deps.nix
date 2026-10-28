@@ -13,7 +13,7 @@ linkFarm "zig-packages" [
   {
     name = "N-V-__8AAA46JQABKU7sa-6xGUAN44uFsYSUS_w79UVuu7qo";
     path = fetchgit {
-      url = "https://gitlab.freedesktop.org/wayland/wayland?ref=1.26.0";
+      url = "https://gitlab.freedesktop.org/wayland/wayland";
       rev = "87cc8a8728a923fc57938faa81ba0e74f34ecdc7";
       hash = "sha256-dnaXYcVfc4DfNRsAEL316eSTen9tpf+nuQbActege4E=";
     };
@@ -381,7 +381,7 @@ linkFarm "zig-packages" [
   {
     name = "N-V-__8AAMX2GwiF4I3vxSUHX70z0UP4G2EwLiT2Q9eNGkwN";
     path = fetchgit {
-      url = "https://github.com/libexpat/libexpat?ref=R_2_7_1";
+      url = "https://github.com/libexpat/libexpat";
       rev = "f9a3eeb3e09fbea04b1c451ffc422ab2f1e45744";
       hash = "sha256-fAJgHW3KIe5qtQ0ymRiyB8WBt05bMz8b3+JBibCpzQw=";
     };
@@ -481,7 +481,7 @@ linkFarm "zig-packages" [
   {
     name = "SDL-2.32.10-JToi34a4EgEYfCUCjSrKCF6Kmryc7Km9YP6k1qEyDMAz";
     path = fetchgit {
-      url = "https://github.com/david-vanderson/SDL?ref=zig16";
+      url = "https://github.com/david-vanderson/SDL";
       rev = "9243546640b45eba67d3cccc939add6039dc6c62";
       hash = "sha256-LMHBGI4otBXJqcNeSHd/cox1bbeHDaW85nDwL7I0el4=";
     };
@@ -528,7 +528,7 @@ linkFarm "zig-packages" [
   {
     name = "libexpat-2.7.1-3-y_akI_s7AABtuMADtwTTJGOxx8iY5ZC9T8EON6cjvbNw";
     path = fetchgit {
-      url = "https://github.com/allyourcodebase/libexpat?ref=2.7.1-3";
+      url = "https://github.com/allyourcodebase/libexpat";
       rev = "662b7d1cb5f347598d4619d125be317cc2c52b62";
       hash = "sha256-vMLEFTg/usFKqiHw4/rdMSIHtwQSCXdlrydTD/bZ9tQ=";
     };
@@ -615,7 +615,7 @@ linkFarm "zig-packages" [
   {
     name = "translate_c-2.0.0-Q_BUWltOBwBYABF84EUL208pIFeUIwbBs29FmVBaafN5";
     path = fetchgit {
-      url = "https://codeberg.org/ziglang/translate-c?ref=zig-0.17.x";
+      url = "https://codeberg.org/ziglang/translate-c";
       rev = "02ff0c523fb92a38939b04d0145c4a9602a74d56";
       hash = "sha256-13iPyWXUhBQXhF7AKbzKwrVdIrDQrMBNL8OfMyFdde0=";
     };
@@ -709,7 +709,7 @@ linkFarm "zig-packages" [
   {
     name = "zigwin32-25.0.28-preview-6BfVhYKN5AOvXPVJq4bGZ7C5dM3PbUra4xhKAKOFJGcF";
     path = fetchgit {
-      url = "https://github.com/kristoff-it/zigwin32?ref=fix/zig16";
+      url = "https://github.com/kristoff-it/zigwin32";
       rev = "1102e9b82e8bd50913b6a78035bfb399ebd8cf97";
       hash = "sha256-Nn/XAMNbe6yINGHWWZ0tlIdKVisbf1SWS/RSCFwOcPw=";
     };
