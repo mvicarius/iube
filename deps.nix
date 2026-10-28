@@ -304,7 +304,7 @@ linkFarm "zig-packages" [
     name = "N-V-__8AAJl1DwBezhYo_VE6f53mPVm00R-Fk28NPW7P14EQ";
     path = fetchgit {
       url = "https://github.com/emscripten-core/emsdk";
-      ref = "4.0.9";
+      tag = "4.0.9";
       hash = "sha256-ftUQjgMio8G3aHIux9ZckJFYq1Vdfkv5w3830XO1Ris=";
     };
   }
