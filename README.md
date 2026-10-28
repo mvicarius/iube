@@ -22,9 +22,9 @@ nix develop --command zig build run
 ```
 
 The build needs `wayland` and `libxkbcommon` development headers. The
-generated protocol bindings for `xdg-shell`, `wlr-layer-shell` and
-`cursor-shape` are checked into `src/protocol`, so `wayland-scanner` and
-`wayland-protocols` are not build dependencies.
+generated protocol bindings for `wlr-layer-shell` and `cursor-shape` are
+checked into `src/protocol`, so `wayland-scanner` and `wayland-protocols` are
+not build dependencies.
 
 This project requires Zig **0.17.0**. The flake tracks `nixos-unstable`, which
 currently ships that version.
@@ -37,19 +37,31 @@ currently ships that version.
 - Mouse wheel scrolls the list.
 - Press `Esc` to close.
 
+## Layer-shell is required
+
+**Layer-shell is needed for optimal working of the application.** iube creates
+its window as a `zwlr_layer_shell_v1` overlay surface: that is what gives it a
+native Wayland, centred 640×360 window with exclusive keyboard focus, without
+any compositor-specific window rule.
+
+Layer-shell is supported by:
+
+- Hyprland, Sway and other wlroots-based compositors
+- KDE Plasma / KWin
+- Wayfire, labwc, River, niri
+- many Mir-based compositors (some need
+  `--add-wayland-extension zwlr_layer_shell_v1`)
+
+It is **not** supported by GNOME/Mutter, Weston, or X11 sessions. On those,
+iube exits with `LayerShellUnavailable` rather than opening a normal tiled
+window. Core Wayland (`xdg-shell`) has no portable way to request a floating,
+centred overlay, so there is no useful fallback.
+
 ## Window behaviour
 
-On compositors that support `zwlr_layer_shell_v1` (Hyprland, wlroots-based
-compositors), iube creates an **overlay layer surface** sized 640×360,
-centred on the focused output, with exclusive keyboard focus. No compositor
-configuration is required.
-
-On compositors without layer-shell support, iube falls back to a regular
-xdg-toplevel with a 640×360 min/max size. On Hyprland that fallback still
-registers a runtime rule named `iube-runtime` with `hyprctl eval` before the
-window is mapped, so the toplevel floats and is centred. The equivalent
-config-managed rule is in [`hypr/iube.lua`](hypr/iube.lua), named
-`iube-config` so the app's runtime rule does not overwrite it.
+iube creates an **overlay layer surface** sized 640×360, centred on the
+focused output, with exclusive keyboard focus. No compositor configuration is
+required.
 
 ## Implementation notes
 

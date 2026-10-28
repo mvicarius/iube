@@ -14,13 +14,12 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // Generated Wayland protocol bindings (xdg-shell, wlr-layer-shell and
-    // cursor-shape) live in the tree so the build does not need
-    // wayland-scanner or wayland-protocols.
+    // Generated Wayland protocol bindings (wlr-layer-shell and cursor-shape)
+    // live in the tree so the build does not need wayland-scanner or
+    // wayland-protocols.
     exe.root_module.addIncludePath(b.path("src/protocol"));
     exe.root_module.addCSourceFiles(.{
         .files = &.{
-            "src/protocol/xdg-shell-protocol.c",
             "src/protocol/layer-shell-protocol.c",
             "src/protocol/cursor-shape-protocol.c",
         },

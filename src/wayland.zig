@@ -1,9 +1,12 @@
 //! Minimal Wayland client: shared-memory surfaces, keyboard/pointer input and
-//! a layer-shell overlay (with an xdg-shell fallback).
+//! a layer-shell overlay.
 //!
-//! The protocol bindings for xdg-shell, wlr-layer-shell and cursor-shape are
-//! generated C headers checked into `src/protocol`, so the only build-time
-//! libraries are libwayland-client and libxkbcommon.
+//! The protocol bindings for wlr-layer-shell and cursor-shape are generated C
+//! headers checked into `src/protocol`, so the only build-time libraries are
+//! libwayland-client and libxkbcommon.
+//!
+//! A compositor that advertises `zwlr_layer_shell_v1` is required: core
+//! Wayland has no portable way to request a floating, centred overlay.
 
 const std = @import("std");
 
@@ -66,9 +69,6 @@ const listeners = struct {
     var keyboard: c.wl_keyboard_listener = undefined;
     var pointer: c.wl_pointer_listener = undefined;
     var surface: c.wl_surface_listener = undefined;
-    var wm_base: c.xdg_wm_base_listener = undefined;
-    var xdg_surface: c.xdg_surface_listener = undefined;
-    var toplevel: c.xdg_toplevel_listener = undefined;
     var layer_surface: c.zwlr_layer_surface_v1_listener = undefined;
     var initialized = false;
 };
@@ -84,7 +84,6 @@ pub const Client = struct {
     seat: ?*c.wl_seat = null,
     seat_version: u32 = 0,
     layer_shell: ?*c.zwlr_layer_shell_v1 = null,
-    xdg_wm_base: ?*c.xdg_wm_base = null,
     cursor_manager: ?*c.wp_cursor_shape_manager_v1 = null,
 
     keyboard: ?*c.wl_keyboard = null,
@@ -95,16 +94,11 @@ pub const Client = struct {
 
     surface: ?*c.wl_surface = null,
     layer_surface: ?*c.zwlr_layer_surface_v1 = null,
-    xdg_surface: ?*c.xdg_surface = null,
-    toplevel: ?*c.xdg_toplevel = null,
 
     logical_width: u32 = default_width,
     logical_height: u32 = default_height,
-    pending_width: u32 = default_width,
-    pending_height: u32 = default_height,
     scale: u32 = 1,
     configured: bool = false,
-    use_layer_shell: bool = false,
 
     buffers: [2]ShmBuffer = undefined,
     buffers_valid: [2]bool = .{ false, false },
@@ -146,9 +140,7 @@ pub const Client = struct {
 
         if (self.compositor == null or self.shm == null) return error.MissingCompositor;
         if (self.seat == null) return error.MissingSeat;
-
-        self.use_layer_shell = self.layer_shell != null;
-        if (!self.use_layer_shell and self.xdg_wm_base == null) return error.NoShell;
+        if (self.layer_shell == null) return error.LayerShellUnavailable;
     }
 
     pub fn deinit(self: *Client) void {
@@ -164,8 +156,6 @@ pub const Client = struct {
             if (self.seat_version >= 5) c.wl_seat_release(seat);
         }
 
-        if (self.toplevel) |toplevel| c.xdg_toplevel_destroy(toplevel);
-        if (self.xdg_surface) |surface| c.xdg_surface_destroy(surface);
         if (self.layer_surface) |layer_surface| c.zwlr_layer_surface_v1_destroy(layer_surface);
         if (self.surface) |surface| c.wl_surface_destroy(surface);
 
@@ -181,7 +171,6 @@ pub const Client = struct {
 
         if (self.shm) |shm| c.wl_shm_destroy(shm);
         if (self.compositor) |compositor| c.wl_compositor_destroy(compositor);
-        if (self.xdg_wm_base) |wm_base| c.xdg_wm_base_destroy(wm_base);
         if (self.layer_shell) |layer_shell| c.zwlr_layer_shell_v1_destroy(layer_shell);
 
         if (self.xkb_state) |state| c.xkb_state_unref(state);
@@ -194,47 +183,31 @@ pub const Client = struct {
     }
 
     pub fn createWindow(self: *Client) !void {
+        const layer_shell = self.layer_shell orelse return error.LayerShellUnavailable;
+
         const surface = c.wl_compositor_create_surface(self.compositor.?) orelse return error.NoSurface;
         self.surface = surface;
         _ = c.wl_surface_add_listener(surface, &listeners.surface, self);
 
-        if (self.layer_shell) |layer_shell| {
-            const layer_surface = c.zwlr_layer_shell_v1_get_layer_surface(
-                layer_shell,
-                surface,
-                null,
-                c.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
-                "iube",
-            ) orelse return error.NoLayerSurface;
-            self.layer_surface = layer_surface;
-            _ = c.zwlr_layer_surface_v1_add_listener(layer_surface, &listeners.layer_surface, self);
+        const layer_surface = c.zwlr_layer_shell_v1_get_layer_surface(
+            layer_shell,
+            surface,
+            null,
+            c.ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
+            "iube",
+        ) orelse return error.NoLayerSurface;
+        self.layer_surface = layer_surface;
+        _ = c.zwlr_layer_surface_v1_add_listener(layer_surface, &listeners.layer_surface, self);
 
-            c.zwlr_layer_surface_v1_set_size(layer_surface, default_width, default_height);
-            c.zwlr_layer_surface_v1_set_anchor(layer_surface, 0);
-            c.zwlr_layer_surface_v1_set_exclusive_zone(layer_surface, 0);
-            c.zwlr_layer_surface_v1_set_margin(layer_surface, 0, 0, 0, 0);
-            c.zwlr_layer_surface_v1_set_keyboard_interactivity(
-                layer_surface,
-                c.ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE,
-            );
-            c.wl_surface_commit(surface);
-        } else if (self.xdg_wm_base) |wm_base| {
-            const xdg_surface = c.xdg_wm_base_get_xdg_surface(wm_base, surface) orelse return error.NoXdgSurface;
-            self.xdg_surface = xdg_surface;
-            _ = c.xdg_surface_add_listener(xdg_surface, &listeners.xdg_surface, self);
-
-            const toplevel = c.xdg_surface_get_toplevel(xdg_surface) orelse return error.NoToplevel;
-            self.toplevel = toplevel;
-            _ = c.xdg_toplevel_add_listener(toplevel, &listeners.toplevel, self);
-
-            c.xdg_toplevel_set_title(toplevel, "iube");
-            c.xdg_toplevel_set_app_id(toplevel, "iube");
-            c.xdg_toplevel_set_min_size(toplevel, default_width, default_height);
-            c.xdg_toplevel_set_max_size(toplevel, default_width, default_height);
-            c.wl_surface_commit(surface);
-        } else {
-            return error.NoShell;
-        }
+        c.zwlr_layer_surface_v1_set_size(layer_surface, default_width, default_height);
+        c.zwlr_layer_surface_v1_set_anchor(layer_surface, 0);
+        c.zwlr_layer_surface_v1_set_exclusive_zone(layer_surface, 0);
+        c.zwlr_layer_surface_v1_set_margin(layer_surface, 0, 0, 0, 0);
+        c.zwlr_layer_surface_v1_set_keyboard_interactivity(
+            layer_surface,
+            c.ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE,
+        );
+        c.wl_surface_commit(surface);
 
         _ = c.wl_display_flush(self.display);
     }
@@ -487,18 +460,6 @@ fn initListeners() void {
     listeners.surface.preferred_buffer_scale = surfacePreferredScale;
     listeners.surface.preferred_buffer_transform = surfacePreferredTransform;
 
-    listeners.wm_base = std.mem.zeroes(c.xdg_wm_base_listener);
-    listeners.wm_base.ping = wmBasePing;
-
-    listeners.xdg_surface = std.mem.zeroes(c.xdg_surface_listener);
-    listeners.xdg_surface.configure = xdgSurfaceConfigure;
-
-    listeners.toplevel = std.mem.zeroes(c.xdg_toplevel_listener);
-    listeners.toplevel.configure = toplevelConfigure;
-    listeners.toplevel.close = toplevelClose;
-    listeners.toplevel.configure_bounds = toplevelConfigureBounds;
-    listeners.toplevel.wm_capabilities = toplevelCapabilities;
-
     listeners.layer_surface = std.mem.zeroes(c.zwlr_layer_surface_v1_listener);
     listeners.layer_surface.configure = layerSurfaceConfigure;
     listeners.layer_surface.closed = layerSurfaceClosed;
@@ -526,10 +487,6 @@ fn registryGlobal(
         self.seat_version = v;
         self.seat = @ptrCast(c.wl_registry_bind(registry.?, name, &c.wl_seat_interface, v));
         if (self.seat) |seat| _ = c.wl_seat_add_listener(seat, &listeners.seat, self);
-    } else if (interfaceEql(iface, "xdg_wm_base")) {
-        const v = @min(version, 4);
-        self.xdg_wm_base = @ptrCast(c.wl_registry_bind(registry.?, name, &c.xdg_wm_base_interface, v));
-        if (self.xdg_wm_base) |wm_base| _ = c.xdg_wm_base_add_listener(wm_base, &listeners.wm_base, self);
     } else if (interfaceEql(iface, "zwlr_layer_shell_v1")) {
         const v = @min(version, 4);
         self.layer_shell = @ptrCast(c.wl_registry_bind(registry.?, name, &c.zwlr_layer_shell_v1_interface, v));
@@ -886,11 +843,6 @@ fn surfacePreferredTransform(data: ?*anyopaque, surface: ?*c.wl_surface, transfo
     _ = transform;
 }
 
-fn wmBasePing(data: ?*anyopaque, wm_base: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
-    _ = data;
-    c.xdg_wm_base_pong(wm_base.?, serial);
-}
-
 fn layerSurfaceConfigure(
     data: ?*anyopaque,
     layer_surface: ?*c.zwlr_layer_surface_v1,
@@ -915,52 +867,6 @@ fn layerSurfaceClosed(data: ?*anyopaque, layer_surface: ?*c.zwlr_layer_surface_v
     _ = layer_surface;
     const self = clientFrom(data);
     self.push(.{ .close = {} });
-}
-
-fn xdgSurfaceConfigure(data: ?*anyopaque, xdg_surface: ?*c.xdg_surface, serial: u32) callconv(.c) void {
-    const self = clientFrom(data);
-    c.xdg_surface_ack_configure(xdg_surface.?, serial);
-    self.logical_width = self.pending_width;
-    self.logical_height = self.pending_height;
-    self.configured = true;
-
-    self.ensureBuffers() catch |err| {
-        std.log.err("failed to allocate Wayland buffers: {s}", .{@errorName(err)});
-    };
-    self.push(.{ .configure = {} });
-}
-
-fn toplevelConfigure(
-    data: ?*anyopaque,
-    toplevel: ?*c.xdg_toplevel,
-    width: i32,
-    height: i32,
-    states: ?*c.wl_array,
-) callconv(.c) void {
-    _ = toplevel;
-    _ = states;
-    const self = clientFrom(data);
-    self.pending_width = if (width > 0) @intCast(width) else default_width;
-    self.pending_height = if (height > 0) @intCast(height) else default_height;
-}
-
-fn toplevelClose(data: ?*anyopaque, toplevel: ?*c.xdg_toplevel) callconv(.c) void {
-    _ = toplevel;
-    const self = clientFrom(data);
-    self.push(.{ .close = {} });
-}
-
-fn toplevelConfigureBounds(data: ?*anyopaque, toplevel: ?*c.xdg_toplevel, width: i32, height: i32) callconv(.c) void {
-    _ = data;
-    _ = toplevel;
-    _ = width;
-    _ = height;
-}
-
-fn toplevelCapabilities(data: ?*anyopaque, toplevel: ?*c.xdg_toplevel, capabilities: ?*c.wl_array) callconv(.c) void {
-    _ = data;
-    _ = toplevel;
-    _ = capabilities;
 }
 
 fn fixedToFloat(value: c.wl_fixed_t) f32 {

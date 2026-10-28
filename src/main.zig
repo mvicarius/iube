@@ -73,18 +73,18 @@ const App = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
-    const on_hyprland = init.environ_map.get("HYPRLAND_INSTANCE_SIGNATURE") != null;
-
     var client: wayland.Client = undefined;
-    try client.init(init.gpa);
+    client.init(init.gpa) catch |err| {
+        if (err == error.LayerShellUnavailable) {
+            std.log.err(
+                "iube requires the wlr-layer-shell protocol (zwlr_layer_shell_v1); " ++
+                    "this compositor does not advertise it (try Hyprland, Sway, KWin, Wayfire, labwc, ...)",
+                .{},
+            );
+        }
+        return err;
+    };
     defer client.deinit();
-
-    // Layer shell gives us a proper centred overlay without compositor rules.
-    // Other compositors get an xdg-toplevel; on Hyprland that needs the old
-    // runtime rule, so install it before the window is mapped.
-    if (!client.use_layer_shell and on_hyprland) {
-        _ = registerHyprlandRule(init.io, init.gpa);
-    }
 
     var apps = try desktop.scan(init.io, init.gpa, .{
         .home = init.environ_map.get("HOME"),
@@ -777,28 +777,4 @@ fn stripFieldCodes(exec: []const u8, out: []u8) []const u8 {
         }
     }
     return out[0..write];
-}
-
-fn registerHyprlandRule(run_io: std.Io, gpa: std.mem.Allocator) bool {
-    const rule =
-        "hl.window_rule({ name = \"iube-runtime\", " ++
-        "match = { class = \"^(iube)$\" }, " ++
-        "float = true, center = true, pin = true, size = \"640 360\", " ++
-        "border_size = 0, rounding = 8, no_shadow = true, no_blur = true, dim_around = true })";
-
-    const result = std.process.run(gpa, run_io, .{
-        .argv = &.{ "hyprctl", "eval", rule },
-        .stdout_limit = .limited(4096),
-        .stderr_limit = .limited(4096),
-    }) catch |err| {
-        std.log.warn("hyprctl eval failed: {s}", .{@errorName(err)});
-        return false;
-    };
-    defer gpa.free(result.stdout);
-    defer gpa.free(result.stderr);
-
-    if (result.stderr.len > 0) {
-        std.log.warn("hyprctl: {s}", .{std.mem.trimEnd(u8, result.stderr, "\n")});
-    }
-    return true;
 }
