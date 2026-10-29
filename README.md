@@ -1,5 +1,20 @@
 # iube
 
+## The name
+
+**iube** comes from Latin *iubeō, iubēre* (“to order, command”). The form
+*iube* (also written *iubē*) is the second-person singular present active
+imperative, so it means **“command!”** or **“order!”**.
+
+The imperative was chosen deliberately. iube is a tool for telling your OS what
+to do — launch this application, connect to that network, change this setting,
+turn that off — rather than a passive settings browser. The name is the action:
+you give the command, and iube carries it out.
+
+- Classical Latin: **[ˈjʊ.beː]** — roughly **YOO-beh**, with a short *u* and a
+  long final *e*.
+- Common English approximation: **/ˈjuːbeɪ/** — **YOO-bay**.
+
 iube is a small, dependency-light control panel for the Linux desktop. It opens
 fast, draws its own UI, and keeps nothing running in the background.
 
