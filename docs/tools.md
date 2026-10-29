@@ -52,6 +52,15 @@ require `libdbus`, `libsystemd` or `libnm`.
 **Goal:** output volume, mute, input level and default devices without a volume
 daemon of iube's own, and without linking libpulse or libpipewire.
 
+**Why ALSA and PipeWire both appear below:** they are different layers, not two
+alternatives that iube needs at once. ALSA is the kernel/driver interface that
+every Linux sound device goes through. PipeWire is a userspace sound server, and
+its `pipewire-pulse` component exposes the PulseAudio-compatible socket that
+iube uses now. The current implementation therefore needs only that socket:
+PipeWire provides it on most modern systems, or PulseAudio provides it on older
+ones. The ALSA fallback is for bare systems with no sound server, and the
+PipeWire native protocol is an optional future path for deeper routing control.
+
 ### Implemented
 
 - **PulseAudio native protocol, version 12.** Connect to
@@ -71,16 +80,18 @@ daemon of iube's own, and without linking libpulse or libpipewire.
 
 ### Next
 
-- **ALSA control fallback.** On systems without a PulseAudio socket, read and
-  write mixer controls through `/dev/snd/controlC*` using the kernel's ALSA
-  control ioctls.
+- **Optional ALSA fallback.** On systems without a PulseAudio-compatible socket,
+  read and write mixer controls through `/dev/snd/controlC*` using the kernel's
+  ALSA control ioctls. ALSA is already underneath PipeWire/PulseAudio; this
+  fallback does not add a required dependency.
 - **Per-application streams.** Add `GET_SINK_INPUT_INFO_LIST` and support
   volume, mute and move-to-device for playback streams.
 - **Live updates.** Subscribe to `PA_COMMAND_SUBSCRIBE` events instead of
   refreshing only when the window opens or the user presses `R`.
-- **PipeWire native protocol.** Deeper graph and device routing could skip the
-  PulseAudio compatibility layer. It is more complex and less of a stable
-  public client ABI, so it remains a later target.
+- **Optional PipeWire native protocol.** Deeper graph and per-application
+  routing could skip the PulseAudio compatibility layer. It is more complex and
+  less of a stable public client ABI, so it remains a later target and is not
+  required for normal device control.
 - **Output/input level meters.** Read stream peaks without keeping a playback
   stream open in iube.
 
