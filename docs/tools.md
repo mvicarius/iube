@@ -47,41 +47,50 @@ require `libdbus`, `libsystemd` or `libnm`.
 
 ## Audio (`iube audio`)
 
-**Goal:** output volume, mute, input level, default devices and per-stream
-routing without a volume daemon of iube's own.
+**Status:** initial implementation in `src/audio.zig` and `src/audio_view.zig`.
 
-### Planned interfaces
+**Goal:** output volume, mute, input level and default devices without a volume
+daemon of iube's own, and without linking libpulse or libpipewire.
 
-- **Primary: PulseAudio native protocol.** Connect to
-  `$XDG_RUNTIME_DIR/pulse/native` and use the documented PulseAudio protocol for
-  sinks, sources, sink inputs, default device changes, volume and mute. Both
-  PulseAudio and `pipewire-pulse` expose this socket, so the same path covers
-  the two common desktop audio stacks.
-- **Fallback: ALSA control interface.** On systems without a PulseAudio socket,
-  read and write mixer controls through the ALSA control device
-  (`/dev/snd/controlC*`) using the kernel's ALSA control ioctls. This gives
-  hardware volume and mute at minimum.
-- **Future: PipeWire native protocol.** Deeper graph and device routing could
-  use PipeWire's native protocol. It is more complex and less of a stable
-  public client ABI than the PulseAudio compatibility socket, so it is not the
-  first target.
+### Implemented
 
-### UI shape
+- **PulseAudio native protocol, version 12.** Connect to
+  `$XDG_RUNTIME_DIR/pulse/native`, authenticate with the user's PulseAudio
+  cookie, and exchange length-prefixed tagstruct packets over the Unix socket.
+  Both PulseAudio and `pipewire-pulse` expose this socket, so the same client
+  covers the two common desktop audio stacks.
+- **Device discovery.** `GET_SERVER_INFO`, `GET_SINK_INFO_LIST` and
+  `GET_SOURCE_INFO_LIST` supply the default sink/source and the device lists.
+  Monitor sources are filtered out of the input list.
+- **Controls.** `SET_SINK_VOLUME`, `SET_SOURCE_VOLUME`, `SET_SINK_MUTE`,
+  `SET_SOURCE_MUTE`, `SET_DEFAULT_SINK` and `SET_DEFAULT_SOURCE`.
+- **UI.** `Tab` switches Outputs/Inputs, `Up`/`Down` selects, `Left`/`Right`
+  changes volume in 5% steps, `M` mutes, `Enter` sets the default, `R`
+  refreshes and `Esc` closes. Volume bars, mute state and the default marker use
+  the shared theme.
 
-- Default output and input with volume/mute.
-- List of sinks and sources with a "set default" action.
-- Per-application playback streams with volume and move-to-device.
-- Optional input monitoring level.
-- Keyboard: `Up`/`Down` to move, `Left`/`Right` to change volume, `M` to mute,
-  `Enter` to open a device list, `Esc` to close.
+### Next
+
+- **ALSA control fallback.** On systems without a PulseAudio socket, read and
+  write mixer controls through `/dev/snd/controlC*` using the kernel's ALSA
+  control ioctls.
+- **Per-application streams.** Add `GET_SINK_INPUT_INFO_LIST` and support
+  volume, mute and move-to-device for playback streams.
+- **Live updates.** Subscribe to `PA_COMMAND_SUBSCRIBE` events instead of
+  refreshing only when the window opens or the user presses `R`.
+- **PipeWire native protocol.** Deeper graph and device routing could skip the
+  PulseAudio compatibility layer. It is more complex and less of a stable
+  public client ABI, so it remains a later target.
+- **Output/input level meters.** Read stream peaks without keeping a playback
+  stream open in iube.
 
 ### Open questions
 
-- Whether to subscribe to change events or refresh state when the window gains
-  focus. Subscribing is nicer but adds a second socket and event loop; the
-  first version will probably refresh on open and after each action.
-- Whether ALSA control alone is enough for the fallback path on every distro
-  (some laptops route volume through a DSP).
+- Whether the ALSA fallback should control hardware mixers directly or defer to
+  `alsactl` state. Some laptops route volume through a DSP, so control names
+  vary.
+- Whether subscription events are worth the extra socket/event-loop work in the
+  first release, or whether refresh-on-open is enough.
 
 ## Bluetooth (`iube bluetooth`)
 

@@ -32,9 +32,9 @@ pub const all = [_]Tool{
     .{
         .id = "audio",
         .name = "Audio",
-        .description = "Output volume, input level and device routing.",
-        .status = .coming_soon,
-        .backend = "PipeWire native protocol, with an ALSA control fallback.",
+        .description = "Output volume, input level and default devices.",
+        .status = .available,
+        .backend = "PulseAudio native protocol over the user socket.",
     },
     .{
         .id = "bluetooth",

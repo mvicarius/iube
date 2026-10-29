@@ -30,6 +30,8 @@ src/
 
   panel.zig        control panel: fixed list of all tools, no search/scroll
   launcher.zig     application launcher: .desktop scan, search, launch
+  audio_view.zig   audio controller: outputs, inputs, volume, mute, default
+  audio.zig        PulseAudio native-protocol client (no libpulse)
 
   placeholder.zig  "coming soon" view for unfinished tools
   tools.zig        tool registry (id, name, description, status, backend note)
@@ -59,7 +61,8 @@ Every command uses:
 - `session.zig` — the same event loop, key repeat, blinking and cursor-shape
   handling.
 
-Only the view differs.
+Only the view differs. `audio_view.zig` additionally uses `audio.zig`, which is
+specific to the audio tool but still linked without any new dependency.
 
 ## View interface
 

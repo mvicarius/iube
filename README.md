@@ -24,15 +24,16 @@ one renderer:
 
 - **Application launcher** — implemented (`iube launch`).
 - **Control panel** — implemented (`iube`), listing every tool iube exposes.
-- **Audio manager** — planned; placeholder view available (`iube audio`).
+- **Audio manager** — initial implementation (`iube audio`): outputs, inputs,
+  volume, mute and default device.
 - **Bluetooth manager** — planned; placeholder view available (`iube bluetooth`).
 - **Wi-Fi manager** — planned; placeholder view available (`iube wifi`).
 - **Power manager** — planned; placeholder view available (`iube power`).
 
-The management tools will talk to the kernel and system services directly
-instead of pulling in GTK, Qt, NetworkManager client libraries, BlueZ client
-libraries, PipeWire client libraries or D-Bus client libraries. See
-[docs/tools.md](docs/tools.md) for the planned backends.
+The management tools talk to the kernel and system services directly instead of
+pulling in GTK, Qt, NetworkManager client libraries, BlueZ client libraries,
+PipeWire client libraries or D-Bus client libraries. See
+[docs/tools.md](docs/tools.md) for the implemented and planned backends.
 
 ## Current status
 
@@ -41,21 +42,22 @@ libraries, PipeWire client libraries or D-Bus client libraries. See
 | Control panel | **Available** | `iube` |
 | Application launcher | **Available** | `iube launch` |
 | Shared config, theme and renderer | **Available** | all commands |
-| Audio | Placeholder ("coming soon") | `iube audio` |
+| Audio | **Initial implementation** | `iube audio` |
 | Bluetooth | Placeholder ("coming soon") | `iube bluetooth` |
 | Wi-Fi | Placeholder ("coming soon") | `iube wifi` |
 | Power | Placeholder ("coming soon") | `iube power` |
 
 "Placeholder" means the command already opens a real iube window with the
 shared theme and window behaviour. It shows the tool name, a **Coming soon**
-badge and the planned backend. The tool itself is not implemented yet.
+badge and the planned backend. The tool itself is not implemented yet. This
+currently applies to Bluetooth, Wi-Fi and Power.
 
 ## How the commands work
 
 ```sh
 iube             # control panel: every tool, all entries visible, no search
 iube launch      # application launcher (the original iube experience)
-iube audio       # audio tool (placeholder for now)
+iube audio       # output/input volume, mute and default device
 iube bluetooth   # bluetooth tool (placeholder for now)
 iube wifi        # Wi-Fi tool (placeholder for now)
 iube power       # power tool (placeholder for now)
@@ -69,13 +71,33 @@ The paths are deliberately separate:
   load icons or initialise launcher state.
 - `iube launch` builds only the launcher. It does **not** build the panel or
   inspect the tool registry beyond dispatch.
-- `iube <tool>` builds only that tool's view. For now that is a placeholder.
+- `iube <tool>` builds only that tool's view. Audio is a real view; Bluetooth,
+  Wi-Fi and Power are still placeholders.
 
 All paths load the same `~/.config/iube/config`, compute the same scaled
 metrics, use the same `wl_shm` renderer, font, colours, rounded rectangles and
 layer-shell window setup. Selecting an entry in the control panel hands off to
 the matching `iube <tool>` process and exits, so the selected path still starts
 with only its own work.
+
+## Audio controls
+
+`iube audio` talks to `$XDG_RUNTIME_DIR/pulse/native` directly. That socket is
+provided by PulseAudio and by `pipewire-pulse`, so no libpulse or PipeWire
+client library is linked.
+
+- `Tab` switches between outputs and inputs.
+- `Up` / `Down` selects a device.
+- `Left` / `Right` changes volume in 5% steps.
+- `M` toggles mute.
+- `Enter` makes the selected device the default.
+- `R` refreshes the device list.
+- `Esc` closes.
+
+The initial implementation lists real sinks and real capture sources (monitor
+sources are filtered out) and changes their volume, mute and default state
+directly. Per-application streams, the ALSA fallback and live subscription
+updates are still planned.
 
 ## Design goals
 
@@ -84,11 +106,11 @@ with only its own work.
 - **No application toolkit.** The UI is written directly against Wayland and
   composited by hand into `wl_shm` memory. The only linked libraries are libc,
   `libwayland-client` and `libxkbcommon`.
-- **No tool-specific client libraries.** The planned managers will speak the
-  underlying protocols directly: kernel netlink (nl80211), rfkill/sysfs, D-Bus
-  over the system socket, the PulseAudio/PipeWire socket, and logind's D-Bus
-  interface. System services such as BlueZ, wpa_supplicant, PipeWire and logind
-  are still expected to be running; iube does not replace them.
+- **No tool-specific client libraries.** The managers speak the underlying
+  protocols directly: the PulseAudio socket, kernel netlink (nl80211),
+  rfkill/sysfs, D-Bus over the system socket, and logind's D-Bus interface.
+  System services such as PipeWire, BlueZ, wpa_supplicant and logind are still
+  expected to be running; iube does not replace them.
 - **Shared visual language.** Theme, config, scaling, fonts, icons and window
   chrome are shared by every command.
 - **Honest placeholders.** A feature that is not implemented says so in the UI
@@ -104,8 +126,8 @@ The measurements, configuration reference and implementation notes now live in
   configuration, controls, layer-shell requirements and implementation notes.
 - [docs/architecture.md](docs/architecture.md) — command dispatch, module
   layout, shared view interface and how to add a tool.
-- [docs/tools.md](docs/tools.md) — dependency policy and the planned audio,
-  Bluetooth, Wi-Fi and power backends.
+- [docs/tools.md](docs/tools.md) — dependency policy and the implemented and
+  planned audio, Bluetooth, Wi-Fi and power backends.
 
 ## Build
 
@@ -154,8 +176,8 @@ jobs fit the same model and could follow:
 - **Screenshots and screen capture** — `wlr-screencopy` / `ext-image-copy-capture`.
 
 These are ideas, not commitments. The first milestone is to finish the control
-panel structure and the four requested tool views, then replace their
-placeholders with real backends.
+panel structure and the four requested tool views. Audio is the first real
+backend and is in progress; Bluetooth, Wi-Fi and power still need theirs.
 
 ## Requirements
 
