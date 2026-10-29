@@ -95,6 +95,54 @@ not build dependencies.
 This project requires Zig **0.17.0**. The flake tracks `nixos-unstable`, which
 currently ships that version.
 
+## Configuration
+
+iube reads `$XDG_CONFIG_HOME/iube/config`, or `~/.config/iube/config` when
+`XDG_CONFIG_HOME` is unset. The file is optional and is only read once at
+startup. Lines are `key = value`; blank lines, lines starting with `#` or `;`,
+and trailing `;` or ` #` comments are ignored, and an optional `[colors]`
+section groups the colour keys. The file is capped at 64 KiB and is not kept in
+memory after parsing.
+
+```ini
+# ~/.config/iube/config
+
+# Multiplies every dimension: window, margins, icons, text and radii.
+# Range 0.5 .. 4.0. Default: 1.0
+scale = 1.0
+
+# Window corner radius. Search, rows and fallback icons use half of this.
+# Default: 0
+corner_radius = 12
+
+[colors]
+# Rosé Pine defaults, shown here for clarity.
+base = #191724
+surface = #1f1d2e
+accent = #9ccfd8
+text = #e0def4
+muted = #6e6a86
+highlight_low = #21202e
+highlight_mid = #403d52
+highlight_high = #524f67
+```
+
+Colours accept `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa` and the same values with
+a `0x` prefix. Invalid values are reported at startup and the default is kept.
+
+The colour roles are:
+
+| Key | Used for |
+| --- | --- |
+| `base` | window background |
+| `surface` | search field and unselected rows |
+| `accent` | search-field focus ring and text cursor |
+| `text` | application names and typed query |
+| `muted` | placeholder text, "No matches", fallback icon initials |
+| `highlight_low` | hovered row |
+| `highlight_mid` | window border |
+| `highlight_high` | selected row |
+
 ## Controls
 
 - Type to filter the list.
@@ -125,9 +173,9 @@ centred overlay, so there is no useful fallback.
 
 ## Window behaviour
 
-iube creates an **overlay layer surface** sized 640×360, centred on the
-focused output, with exclusive keyboard focus. No compositor configuration is
-required.
+iube creates an **overlay layer surface** sized 640×360 by default (multiplied
+by the configured `scale`), centred on the focused output, with exclusive
+keyboard focus. No compositor configuration is required.
 
 ## Implementation notes
 

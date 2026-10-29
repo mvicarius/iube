@@ -299,11 +299,13 @@ pub fn glyph(codepoint: u21) ?*const [16]u8 {
     return &glyphs[index - 1];
 }
 
-pub fn advance(scale: u32) i32 {
-    return @intCast((glyph_width + 1) * scale);
+/// Horizontal advance for one glyph. `scale` is in physical pixels per font
+/// pixel and may be fractional (for example 1.25× config scale on a 1× output).
+pub fn advance(scale: f32) i32 {
+    return @intFromFloat(@round(@as(f32, glyph_width + 1) * scale));
 }
 
-pub fn textWidth(text: []const u8, scale: u32) i32 {
+pub fn textWidth(text: []const u8, scale: f32) i32 {
     var width: i32 = 0;
     var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
     while (it.nextCodepoint()) |_| width += advance(scale);

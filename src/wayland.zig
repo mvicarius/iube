@@ -182,6 +182,14 @@ pub const Client = struct {
         c.wl_display_disconnect(self.display);
     }
 
+    /// Request the initial surface size in logical pixels. Call before
+    /// `createWindow`; the compositor may still adjust it in its configure
+    /// event, in which case `logical_width`/`logical_height` are updated there.
+    pub fn setWindowSize(self: *Client, width: u32, height: u32) void {
+        if (width != 0) self.logical_width = width;
+        if (height != 0) self.logical_height = height;
+    }
+
     pub fn createWindow(self: *Client) !void {
         const layer_shell = self.layer_shell orelse return error.LayerShellUnavailable;
 
@@ -199,7 +207,7 @@ pub const Client = struct {
         self.layer_surface = layer_surface;
         _ = c.zwlr_layer_surface_v1_add_listener(layer_surface, &listeners.layer_surface, self);
 
-        c.zwlr_layer_surface_v1_set_size(layer_surface, default_width, default_height);
+        c.zwlr_layer_surface_v1_set_size(layer_surface, self.logical_width, self.logical_height);
         c.zwlr_layer_surface_v1_set_anchor(layer_surface, 0);
         c.zwlr_layer_surface_v1_set_exclusive_zone(layer_surface, 0);
         c.zwlr_layer_surface_v1_set_margin(layer_surface, 0, 0, 0, 0);

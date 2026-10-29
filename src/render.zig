@@ -130,7 +130,10 @@ pub const Canvas = struct {
 
                 var dist: f32 = 0;
                 if (qx <= 0 and qy <= 0) {
-                    dist = -r;
+                    // Inside the rectangle: negative distance to the nearest
+                    // edge. The old `-r` shortcut made radius-0 rectangles
+                    // render at 50% opacity because it ignored the box depth.
+                    dist = @max(qx, qy) - r;
                 } else if (qx > 0 and qy <= 0) {
                     dist = qx - r;
                 } else if (qy > 0 and qx <= 0) {
@@ -148,27 +151,12 @@ pub const Canvas = struct {
         }
     }
 
-    pub fn text(self: *Canvas, x: i32, y: i32, text_value: []const u8, color: Color, glyph_scale: u32) i32 {
+    pub fn text(self: *Canvas, x: i32, y: i32, text_value: []const u8, color: Color, glyph_scale: f32) i32 {
         var cursor = x;
         var it = std.unicode.Utf8Iterator{ .bytes = text_value, .i = 0 };
         while (it.nextCodepoint()) |codepoint| {
             const bitmap = font.glyph(codepoint) orelse font.glyph('?').?;
-            var row: usize = 0;
-            while (row < font.glyph_height) : (row += 1) {
-                const bits = bitmap[row];
-                var col: usize = 0;
-                while (col < font.glyph_width) : (col += 1) {
-                    if ((bits >> @intCast(col)) & 1 == 0) continue;
-                    self.fillRect(
-                        cursor + @as(i32, @intCast(col)) * @as(i32, @intCast(glyph_scale)),
-                        y + @as(i32, @intCast(row)) * @as(i32, @intCast(glyph_scale)),
-                        @intCast(glyph_scale),
-                        @intCast(glyph_scale),
-                        color,
-                    );
-                }
-            }
-            cursor += font.advance(glyph_scale);
+            cursor = self.drawGlyph(cursor, y, bitmap, color, glyph_scale);
         }
         return cursor;
     }
@@ -181,7 +169,7 @@ pub const Canvas = struct {
         y: i32,
         text_value: []const u8,
         color: Color,
-        glyph_scale: u32,
+        glyph_scale: f32,
         max_width: i32,
     ) i32 {
         if (max_width <= 0) return x;
@@ -265,20 +253,36 @@ pub const Canvas = struct {
         }
     }
 
-    fn drawGlyph(self: *Canvas, x: i32, y: i32, bitmap: *const [font.glyph_height]u8, color: Color, glyph_scale: u32) i32 {
-        var row: usize = 0;
-        while (row < font.glyph_height) : (row += 1) {
-            const bits = bitmap[row];
-            var col: usize = 0;
-            while (col < font.glyph_width) : (col += 1) {
-                if ((bits >> @intCast(col)) & 1 == 0) continue;
+    fn drawGlyph(self: *Canvas, x: i32, y: i32, bitmap: *const [font.glyph_height]u8, color: Color, glyph_scale: f32) i32 {
+        const dst_w: usize = @intFromFloat(@max(1, @round(@as(f32, font.glyph_width) * glyph_scale)));
+        const dst_h: usize = @intFromFloat(@max(1, @round(@as(f32, font.glyph_height) * glyph_scale)));
+
+        var dy: usize = 0;
+        while (dy < dst_h) : (dy += 1) {
+            const src_y = sourcePixel(dy, dst_h, font.glyph_height);
+            const bits = bitmap[src_y];
+
+            var dx: usize = 0;
+            while (dx < dst_w) : (dx += 1) {
+                const src_x = sourcePixel(dx, dst_w, font.glyph_width);
+                if ((bits >> @intCast(src_x)) & 1 == 0) continue;
+
+                // Merge horizontally adjacent set pixels into one fillRect.
+                var run_end = dx + 1;
+                while (run_end < dst_w) {
+                    const next_x = sourcePixel(run_end, dst_w, font.glyph_width);
+                    if ((bits >> @intCast(next_x)) & 1 == 0) break;
+                    run_end += 1;
+                }
+
                 self.fillRect(
-                    x + @as(i32, @intCast(col)) * @as(i32, @intCast(glyph_scale)),
-                    y + @as(i32, @intCast(row)) * @as(i32, @intCast(glyph_scale)),
-                    @intCast(glyph_scale),
-                    @intCast(glyph_scale),
+                    x + @as(i32, @intCast(dx)),
+                    y + @as(i32, @intCast(dy)),
+                    @intCast(run_end - dx),
+                    1,
                     color,
                 );
+                dx = run_end - 1;
             }
         }
         return x + font.advance(glyph_scale);
@@ -309,6 +313,14 @@ pub const Canvas = struct {
     }
 };
 
+fn sourcePixel(dest: usize, dest_size: usize, source_size: usize) usize {
+    const sample = (@as(f32, @floatFromInt(dest)) + 0.5) *
+        @as(f32, @floatFromInt(source_size)) /
+        @as(f32, @floatFromInt(dest_size));
+    const index: usize = @intFromFloat(@floor(sample));
+    return @min(index, source_size - 1);
+}
+
 fn packPremultiplied(color: Color, coverage: u8) u32 {
     const a16 = @as(u16, color.a) * @as(u16, coverage);
     const a: u32 = (a16 + 127) / 255;
@@ -317,4 +329,13 @@ fn packPremultiplied(color: Color, coverage: u8) u32 {
     const g = (@as(u32, color.g) * a + 127) / 255;
     const b = (@as(u32, color.b) * a + 127) / 255;
     return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+test "roundRect with zero radius is opaque inside" {
+    var pixels: [100]u32 = @splat(0);
+    var canvas = Canvas.init(&pixels, 10, 10);
+    const color = Color{ .r = 0x19, .g = 0x17, .b = 0x24 };
+    canvas.roundRect(0, 0, 10, 10, 0, color);
+
+    try std.testing.expectEqual(packPremultiplied(color, 255), pixels[5 * 10 + 5]);
 }

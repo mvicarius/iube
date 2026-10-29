@@ -4,31 +4,66 @@ const desktop = @import("desktop.zig");
 const render = @import("render.zig");
 const png = @import("png.zig");
 const font = @import("font.zig");
+const config = @import("config.zig");
 
 pub const std_options: std.Options = .{ .log_level = .warn };
 
-const window_width = 640;
-const window_height = 360;
-const margin = 16;
-const small_margin = 8;
-const gap = 4;
-const icon_size = 32;
-const row_height = icon_size + small_margin * 2;
-const row_step = row_height + gap;
-const search_height = 40;
-const corner_radius = 16;
-const search_radius = 8;
-const row_radius = 8;
-const text_glyph_scale = 1;
+const base_window_width = 640;
+const base_window_height = 360;
+const base_margin = 16;
+const base_small_margin = 8;
+const base_gap = 4;
+const base_icon_size = 32;
+const base_search_height = 40;
+const base_border_width = 1;
 const blink_period_ms = 530;
 
-const extra_dark = render.Color{ .r = 0x02, .g = 0x05, .b = 0x07 };
-const dark = render.Color{ .r = 0x09, .g = 0x15, .b = 0x1d };
-const accent = render.Color{ .r = 0x08, .g = 0x5f, .b = 0x6c };
-const muted = render.Color{ .r = 0x5a, .g = 0x7a, .b = 0x82 };
-const border_color = extra_dark.lighten(39);
-const control = render.Color{ .r = 0x40, .g = 0x40, .b = 0x40 };
-const white = render.Color{ .r = 0xff, .g = 0xff, .b = 0xff };
+/// Layout values in logical (surface) pixels. `scale` from the config file is
+/// applied here once at startup, so the rest of the UI code can work with
+/// integers while text uses the fractional font scale below.
+const Metrics = struct {
+    window_width: i32,
+    window_height: i32,
+    margin: i32,
+    small_margin: i32,
+    icon_size: i32,
+    row_height: i32,
+    row_step: i32,
+    search_height: i32,
+    corner_radius: i32,
+    search_radius: i32,
+    row_radius: i32,
+    icon_radius: i32,
+    border_width: i32,
+
+    fn init(cfg: config.Config) Metrics {
+        const s = cfg.scale;
+        const margin = scaled(base_margin, s);
+        const small_margin = scaled(base_small_margin, s);
+        const icon_size = scaled(base_icon_size, s);
+        const gap = scaled(base_gap, s);
+        const corner_radius = scaled(cfg.corner_radius, s);
+        return .{
+            .window_width = @max(1, scaled(base_window_width, s)),
+            .window_height = @max(1, scaled(base_window_height, s)),
+            .margin = margin,
+            .small_margin = small_margin,
+            .icon_size = icon_size,
+            .row_height = icon_size + small_margin * 2,
+            .row_step = icon_size + small_margin * 2 + gap,
+            .search_height = scaled(base_search_height, s),
+            .corner_radius = corner_radius,
+            .search_radius = @divTrunc(corner_radius, 2),
+            .row_radius = @divTrunc(corner_radius, 2),
+            .icon_radius = @divTrunc(corner_radius, 2),
+            .border_width = @max(1, scaled(base_border_width, s)),
+        };
+    }
+
+    fn scaled(value: i32, factor: f32) i32 {
+        return @intFromFloat(@round(@as(f32, @floatFromInt(value)) * factor));
+    }
+};
 
 const key_escape: u32 = 0xff1b;
 const key_return: u32 = 0xff0d;
@@ -61,6 +96,8 @@ const App = struct {
     pointer_y: f32 = 0,
     icons: []IconSlot,
     terminal_env: ?[]const u8,
+    cfg: config.Config,
+    metrics: Metrics,
     running: bool = true,
     dirty: bool = true,
     last_input_ms: i64 = 0,
@@ -85,6 +122,13 @@ pub fn main(init: std.process.Init) !void {
         return err;
     };
     defer client.deinit();
+
+    const cfg = config.load(init.io, init.gpa, .{
+        .home = init.environ_map.get("HOME"),
+        .xdg_config_home = init.environ_map.get("XDG_CONFIG_HOME"),
+    });
+    const metrics = Metrics.init(cfg);
+    client.setWindowSize(@intCast(metrics.window_width), @intCast(metrics.window_height));
 
     var apps = try desktop.scan(init.io, init.gpa, .{
         .home = init.environ_map.get("HOME"),
@@ -113,6 +157,8 @@ pub fn main(init: std.process.Init) !void {
         .visible = visible,
         .icons = icons,
         .terminal_env = init.environ_map.get("TERMINAL"),
+        .cfg = cfg,
+        .metrics = metrics,
     };
     recomputeVisible(&app);
     app.last_input_ms = nowMs(init.io);
@@ -374,26 +420,27 @@ fn matchesQuery(haystack: []const u8, needle: []const u8) bool {
 fn listGeometry(app: *App) struct { x: i32, y: i32, w: i32, h: i32 } {
     const width: i32 = @intCast(app.client.logical_width);
     const height: i32 = @intCast(app.client.logical_height);
-    const list_y = margin + search_height + margin;
+    const m = app.metrics;
+    const list_y = m.margin + m.search_height + m.margin;
     return .{
-        .x = margin,
+        .x = m.margin,
         .y = list_y,
-        .w = @max(0, width - margin * 2),
-        .h = @max(0, height - list_y - margin),
+        .w = @max(0, width - m.margin * 2),
+        .h = @max(0, height - list_y - m.margin),
     };
 }
 
 fn maxScroll(app: *App) i32 {
     const geometry = listGeometry(app);
-    const content = @as(i32, @intCast(app.visible_count)) * row_step;
+    const content = @as(i32, @intCast(app.visible_count)) * app.metrics.row_step;
     return @max(0, content - geometry.h);
 }
 
 fn ensureSelectionVisible(app: *App) void {
     const geometry = listGeometry(app);
     const selected = app.selected orelse return;
-    const top = @as(i32, @intCast(selected)) * row_step;
-    const bottom = top + row_height;
+    const top = @as(i32, @intCast(selected)) * app.metrics.row_step;
+    const bottom = top + app.metrics.row_height;
 
     if (top < app.scroll) app.scroll = top;
     if (bottom > app.scroll + geometry.h) app.scroll = bottom - geometry.h;
@@ -410,15 +457,17 @@ fn hitRow(app: *App, x: f32, y: f32) ?usize {
 
     const local = fy - geometry.y + app.scroll;
     if (local < 0) return null;
-    const index: usize = @intCast(@divTrunc(local, row_step));
+    const index: usize = @intCast(@divTrunc(local, app.metrics.row_step));
     if (index >= app.visible_count) return null;
-    if (@mod(local, row_step) >= row_height) return null;
+    if (@mod(local, app.metrics.row_step) >= app.metrics.row_height) return null;
     return index;
 }
 
 fn overSearch(app: *App, x: f32, y: f32) bool {
     const width: f32 = @floatFromInt(app.client.logical_width);
-    const left: f32 = margin;
+    const margin: f32 = @floatFromInt(app.metrics.margin);
+    const search_height: f32 = @floatFromInt(app.metrics.search_height);
+    const left = margin;
     const right = width - margin;
     return x >= left and x < right and y >= margin and y < margin + search_height;
 }
@@ -449,117 +498,165 @@ fn renderFrame(app: *App, now: i64) void {
 }
 
 fn drawUi(app: *App, canvas: *render.Canvas, now: i64) void {
-    const scale: i32 = @intCast(app.client.scale);
+    const output_scale: i32 = @intCast(app.client.scale);
     const width: i32 = @intCast(app.client.logical_width);
     const height: i32 = @intCast(app.client.logical_height);
+    const m = app.metrics;
+    const cfg = app.cfg;
+    const border = m.border_width;
 
-    // Window body and one-pixel border.
-    canvas.roundRect(0, 0, px(width, scale), px(height, scale), px(corner_radius, scale), border_color);
+    // Window body and border. The outer highlight_mid ring is one logical
+    // border-width wide and scales with the rest of the UI.
     canvas.roundRect(
-        px(1, scale),
-        px(1, scale),
-        px(width - 2, scale),
-        px(height - 2, scale),
-        px(corner_radius - 1, scale),
-        extra_dark,
+        0,
+        0,
+        px(width, output_scale),
+        px(height, output_scale),
+        px(m.corner_radius, output_scale),
+        cfg.highlight_mid,
+    );
+    canvas.roundRect(
+        px(border, output_scale),
+        px(border, output_scale),
+        px(@max(0, width - border * 2), output_scale),
+        px(@max(0, height - border * 2), output_scale),
+        px(@max(0, m.corner_radius - border), output_scale),
+        cfg.base,
     );
 
-    const search_x = margin;
-    const search_y = margin;
-    const search_w = width - margin * 2;
+    const search_x = m.margin;
+    const search_y = m.margin;
+    const search_w = @max(0, width - m.margin * 2);
+    const search_h = m.search_height;
+
+    // The accent ring doubles as the focus indicator for the search field.
     canvas.roundRect(
-        px(search_x, scale),
-        px(search_y, scale),
-        px(search_w, scale),
-        px(search_height, scale),
-        px(search_radius, scale),
-        dark,
+        px(search_x, output_scale),
+        px(search_y, output_scale),
+        px(search_w, output_scale),
+        px(search_h, output_scale),
+        px(m.search_radius, output_scale),
+        cfg.accent,
+    );
+    canvas.roundRect(
+        px(search_x + border, output_scale),
+        px(search_y + border, output_scale),
+        px(@max(0, search_w - border * 2), output_scale),
+        px(@max(0, search_h - border * 2), output_scale),
+        px(@max(0, m.search_radius - border), output_scale),
+        cfg.surface,
     );
 
     const query = app.query[0..app.query_len];
-    const glyph_scale: u32 = @intCast(text_glyph_scale * scale);
-    const text_height = font.glyph_height * glyph_scale;
-    const text_y = px(search_y, scale) + @divTrunc(px(search_height, scale) - @as(i32, @intCast(text_height)), 2);
-    const text_x = px(search_x + small_margin, scale);
-    const max_text_width = px(search_w - small_margin * 2 - 2, scale);
+    const font_scale = cfg.scale * @as(f32, @floatFromInt(app.client.scale));
+    const text_height: i32 = @intFromFloat(@round(@as(f32, font.glyph_height) * font_scale));
+    const text_y = px(search_y, output_scale) + @divTrunc(px(search_h, output_scale) - text_height, 2);
+    const text_x = px(search_x + m.small_margin, output_scale);
+    const max_text_width = px(@max(0, search_w - m.small_margin * 2 - border * 2), output_scale);
 
     var cursor_x = text_x;
     if (query.len == 0) {
-        _ = canvas.textFit(text_x, text_y, "Search for your application...", muted, glyph_scale, max_text_width);
+        _ = canvas.textFit(
+            text_x,
+            text_y,
+            "Search for your application...",
+            cfg.muted,
+            font_scale,
+            max_text_width,
+        );
     } else {
-        cursor_x = drawQuery(canvas, text_x, text_y, query, white, glyph_scale, max_text_width);
+        cursor_x = drawQuery(canvas, text_x, text_y, query, cfg.text, font_scale, max_text_width);
     }
 
     const cursor_visible = query.len > 0 and (app.blink_on or (now - app.last_input_ms) < 400);
     if (cursor_visible) {
-        canvas.fillRect(cursor_x, text_y, @max(1, scale), @intCast(text_height), white);
+        const cursor_width = @max(1, @as(i32, @intFromFloat(@round(font_scale))));
+        canvas.fillRect(cursor_x, text_y, cursor_width, text_height, cfg.accent);
     }
 
     const geometry = listGeometry(app);
     canvas.setClip(
-        px(geometry.x, scale),
-        px(geometry.y, scale),
-        px(geometry.w, scale),
-        px(geometry.h, scale),
+        px(geometry.x, output_scale),
+        px(geometry.y, output_scale),
+        px(geometry.w, output_scale),
+        px(geometry.h, output_scale),
     );
 
     app.scroll = std.math.clamp(app.scroll, 0, maxScroll(app));
 
     if (app.visible_count == 0) {
         _ = canvas.text(
-            px(geometry.x + 4, scale),
-            px(geometry.y + 4, scale),
+            px(geometry.x + @divTrunc(m.small_margin, 2), output_scale),
+            px(geometry.y + @divTrunc(m.small_margin, 2), output_scale),
             "No matches",
-            muted,
-            glyph_scale,
+            cfg.muted,
+            font_scale,
         );
     } else {
-        const row_glyph_scale: u32 = glyph_scale;
         var show_index: usize = 0;
         while (show_index < app.visible_count) : (show_index += 1) {
-            const row_y = px(geometry.y, scale) + px(@as(i32, @intCast(show_index)) * row_step - app.scroll, scale);
-            const row_bottom = row_y + px(row_height, scale);
-            if (row_bottom <= px(geometry.y, scale)) continue;
-            if (row_y >= px(geometry.y + geometry.h, scale)) break;
+            const row_y = px(geometry.y, output_scale) +
+                px(@as(i32, @intCast(show_index)) * m.row_step - app.scroll, output_scale);
+            const row_bottom = row_y + px(m.row_height, output_scale);
+            if (row_bottom <= px(geometry.y, output_scale)) continue;
+            if (row_y >= px(geometry.y + geometry.h, output_scale)) break;
 
             const app_index = app.visible[show_index];
             const fill = if (app.selected == show_index)
-                accent
+                cfg.highlight_high
             else if (app.hover == show_index)
-                dark.lighten(5)
+                cfg.highlight_low
             else
-                dark;
+                cfg.surface;
 
             canvas.roundRect(
-                px(geometry.x, scale),
+                px(geometry.x, output_scale),
                 row_y,
-                px(geometry.w, scale),
-                px(row_height, scale),
-                px(row_radius, scale),
+                px(geometry.w, output_scale),
+                px(m.row_height, output_scale),
+                px(m.row_radius, output_scale),
                 fill,
             );
 
-            const icon_x = px(geometry.x + small_margin, scale);
-            const icon_y = row_y + px(small_margin, scale);
-            const icon_px = px(icon_size, scale);
+            const icon_x = px(geometry.x + m.small_margin, output_scale);
+            const icon_y = row_y + px(m.small_margin, output_scale);
+            const icon_px = px(m.icon_size, output_scale);
             if (getIcon(app, app_index)) |image| {
                 canvas.image(icon_x, icon_y, icon_px, icon_px, image);
             } else {
-                canvas.roundRect(icon_x, icon_y, icon_px, icon_px, px(4, scale), control);
+                canvas.roundRect(
+                    icon_x,
+                    icon_y,
+                    icon_px,
+                    icon_px,
+                    px(m.icon_radius, output_scale),
+                    cfg.highlight_low,
+                );
                 const initial = appInitial(app.apps.getName(app_index));
+                const initial_width = font.textWidth(initial, font_scale);
                 _ = canvas.text(
-                    icon_x + px(12, scale),
-                    icon_y + px(8, scale),
+                    icon_x + @divTrunc(icon_px - initial_width, 2),
+                    icon_y + @divTrunc(icon_px - text_height, 2),
                     initial,
-                    muted,
-                    row_glyph_scale,
+                    cfg.muted,
+                    font_scale,
                 );
             }
 
-            const name_x = px(geometry.x + small_margin + icon_size + small_margin, scale);
-            const name_y = row_y + @divTrunc(px(row_height, scale) - @as(i32, @intCast(text_height)), 2);
-            const name_width = px(geometry.w - small_margin * 2 - icon_size - small_margin, scale);
-            _ = canvas.textFit(name_x, name_y, app.apps.getName(app_index), white, row_glyph_scale, name_width);
+            const name_x = px(geometry.x + m.small_margin + m.icon_size + m.small_margin, output_scale);
+            const name_y = row_y + @divTrunc(px(m.row_height, output_scale) - text_height, 2);
+            const name_width = px(
+                @max(0, geometry.w - m.small_margin * 2 - m.icon_size - m.small_margin),
+                output_scale,
+            );
+            _ = canvas.textFit(
+                name_x,
+                name_y,
+                app.apps.getName(app_index),
+                cfg.text,
+                font_scale,
+                name_width,
+            );
         }
     }
 
@@ -572,7 +669,7 @@ fn drawQuery(
     y: i32,
     text: []const u8,
     color: render.Color,
-    glyph_scale: u32,
+    glyph_scale: f32,
     max_width: i32,
 ) i32 {
     if (max_width <= 0) return x;
