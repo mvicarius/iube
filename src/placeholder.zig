@@ -44,7 +44,8 @@ pub const Placeholder = struct {
 
         const font_scale = ui.fontScale(cfg, output_scale);
         const text_height = ui.textHeight(font_scale);
-        const line_height = text_height + m.small_margin;
+        const small_margin_px = ui.px(m.small_margin, output_scale);
+        const line_height = text_height + small_margin_px;
 
         const icon_x = ui.px(m.margin, output_scale);
         const icon_y = ui.px(m.margin, output_scale);
@@ -80,21 +81,21 @@ pub const Placeholder = struct {
         );
 
         const badge_text = "Coming soon";
-        const badge_width = font.textWidth(badge_text, font_scale) + m.small_margin * 2;
-        const badge_height = text_height + m.small_margin;
+        const badge_width = font.textWidth(badge_text, font_scale) + small_margin_px * 2;
+        const badge_height = text_height + small_margin_px;
         const badge_x = ui.px(m.margin, output_scale);
         const badge_y = ui.px(m.margin + m.row_height + m.small_margin, output_scale);
         canvas.roundRect(
             badge_x,
             badge_y,
-            ui.px(badge_width, output_scale),
-            ui.px(badge_height, output_scale),
+            badge_width,
+            badge_height,
             ui.px(m.icon_radius, output_scale),
             cfg.highlight_low,
         );
         _ = canvas.text(
-            badge_x + ui.px(m.small_margin, output_scale),
-            badge_y + @divTrunc(ui.px(badge_height, output_scale) - text_height, 2),
+            badge_x + small_margin_px,
+            badge_y + @divTrunc(badge_height - text_height, 2),
             badge_text,
             cfg.accent,
             font_scale,
@@ -103,13 +104,13 @@ pub const Placeholder = struct {
         const text_x = ui.px(m.margin, output_scale);
         const text_width = ui.px(@max(0, width - m.margin * 2), output_scale);
 
-        var text_y = badge_y + ui.px(badge_height + m.small_margin, output_scale);
+        var text_y = badge_y + badge_height + small_margin_px;
         text_y = ui.drawWrapped(
             canvas,
             text_x,
             text_y,
             text_width,
-            ui.px(line_height, output_scale),
+            line_height,
             self.tool.description,
             cfg.text,
             font_scale,
@@ -117,9 +118,9 @@ pub const Placeholder = struct {
         _ = ui.drawWrapped(
             canvas,
             text_x,
-            text_y + ui.px(@divTrunc(m.small_margin, 2), output_scale),
+            text_y + @divTrunc(small_margin_px, 2),
             text_width,
-            ui.px(line_height, output_scale),
+            line_height,
             self.tool.backend,
             cfg.muted,
             font_scale,
@@ -128,8 +129,7 @@ pub const Placeholder = struct {
         const footer = "Press Esc to close";
         const footer_width = font.textWidth(footer, font_scale);
         _ = canvas.text(
-            ui.px(@max(0, @divTrunc(width - m.margin, 2)), output_scale) -
-                @divTrunc(footer_width, 2),
+            ui.px(@divTrunc(width, 2), output_scale) - @divTrunc(footer_width, 2),
             ui.px(height - m.margin, output_scale) - text_height,
             footer,
             cfg.muted,

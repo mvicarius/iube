@@ -181,39 +181,35 @@ pub const Panel = struct {
                 font_scale,
             );
 
+            const row_y_px = ui.px(row_y, output_scale);
+            const row_height_px = ui.px(m.row_height, output_scale);
+            const small_margin_px = ui.px(m.small_margin, output_scale);
             const badge_text = if (tool.status == .available) "Open" else "Coming soon";
             const badge_color = if (tool.status == .available) cfg.accent else cfg.muted;
-            const badge_width = font.textWidth(badge_text, font_scale) + m.small_margin * 2;
-            const badge_height = text_height + m.small_margin;
-            const badge_x = geometry.x + geometry.w - m.small_margin - badge_width;
-            const badge_y = row_y + @divTrunc(m.row_height - badge_height, 2);
+            const badge_width = font.textWidth(badge_text, font_scale) + small_margin_px * 2;
+            const badge_height = text_height + small_margin_px;
+            const badge_x = ui.px(geometry.x + geometry.w - m.small_margin, output_scale) - badge_width;
+            const badge_y = row_y_px + @divTrunc(row_height_px - badge_height, 2);
 
             canvas.roundRect(
-                ui.px(badge_x, output_scale),
-                ui.px(badge_y, output_scale),
-                ui.px(badge_width, output_scale),
-                ui.px(badge_height, output_scale),
+                badge_x,
+                badge_y,
+                badge_width,
+                badge_height,
                 ui.px(m.icon_radius, output_scale),
                 cfg.highlight_low,
             );
             _ = canvas.text(
-                ui.px(badge_x + m.small_margin, output_scale),
-                ui.px(badge_y, output_scale) + @divTrunc(
-                    ui.px(badge_height, output_scale) - text_height,
-                    2,
-                ),
+                badge_x + small_margin_px,
+                badge_y + @divTrunc(badge_height - text_height, 2),
                 badge_text,
                 badge_color,
                 font_scale,
             );
 
             const name_x = ui.px(geometry.x + m.small_margin + m.icon_size + m.small_margin, output_scale);
-            const name_y = ui.px(row_y, output_scale) +
-                @divTrunc(ui.px(m.row_height, output_scale) - text_height, 2);
-            const name_width = ui.px(
-                @max(0, badge_x - m.small_margin - (geometry.x + m.small_margin + m.icon_size + m.small_margin)),
-                output_scale,
-            );
+            const name_y = row_y_px + @divTrunc(row_height_px - text_height, 2);
+            const name_width = @max(0, badge_x - small_margin_px - name_x);
             _ = canvas.textFit(
                 name_x,
                 name_y,

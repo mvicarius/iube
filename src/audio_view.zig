@@ -89,7 +89,10 @@ pub const Audio = struct {
     }
 
     pub fn windowSize(self: *Audio, metrics: ui.Metrics) ui.WindowSize {
-        const rows = std.math.clamp(self.deviceRowCount(), 3, max_visible_rows);
+        const rows = if (self.state == null)
+            3
+        else
+            std.math.clamp(self.deviceRowCount(), 1, max_visible_rows);
         const header = ui.scaled(base_header_height, metrics.scale);
         const footer = ui.scaled(base_footer_height, metrics.scale);
         const content = @as(i32, @intCast(rows)) * metrics.row_step - metrics.gap;
@@ -522,18 +525,22 @@ pub const Audio = struct {
             return;
         }
 
-        const secondary_scale = font_scale * 0.68;
+        const secondary_scale = font_scale * 0.85;
         const secondary_height = ui.textHeight(secondary_scale);
-        const line_gap = @max(1, @divTrunc(m.small_margin, 4));
+        const line_gap = ui.px(@max(1, @divTrunc(m.small_margin, 4)), output_scale);
         const text_block = text_height + secondary_height + line_gap;
-        const bar_width = ui.scaled(52, m.scale);
-        const bar_height = @max(2, ui.scaled(5, m.scale));
+        const bar_width = ui.px(ui.scaled(52, m.scale), output_scale);
+        const bar_height = @max(2, ui.px(ui.scaled(5, m.scale), output_scale));
+        const margin_px = ui.px(m.small_margin, output_scale);
+        const row_height_px = ui.px(m.row_height, output_scale);
+        const dot_size = @max(3, ui.px(@divTrunc(m.icon_size, 8), output_scale));
 
         for (list, 0..) |device, index| {
             const row_y = geometry.y + @as(i32, @intCast(index)) * m.row_step - self.scroll;
             if (row_y + m.row_height <= geometry.y) continue;
             if (row_y >= geometry.y + geometry.h) break;
 
+            const row_y_px = ui.px(row_y, output_scale);
             const fill = if (self.selected == index)
                 cfg.highlight_high
             else if (self.hover == index)
@@ -543,15 +550,15 @@ pub const Audio = struct {
 
             canvas.roundRect(
                 ui.px(geometry.x, output_scale),
-                ui.px(row_y, output_scale),
+                row_y_px,
                 ui.px(geometry.w, output_scale),
-                ui.px(m.row_height, output_scale),
+                row_height_px,
                 ui.px(m.row_radius, output_scale),
                 fill,
             );
 
             const icon_x = ui.px(geometry.x + m.small_margin, output_scale);
-            const icon_y = ui.px(row_y + m.small_margin, output_scale);
+            const icon_y = row_y_px + margin_px;
             const icon_px = ui.px(m.icon_size, output_scale);
             canvas.roundRect(
                 icon_x,
@@ -571,26 +578,28 @@ pub const Audio = struct {
                 font_scale,
             );
 
-            const text_top = row_y + @divTrunc(m.row_height - text_block, 2);
-            const primary_y = ui.px(text_top, output_scale);
-            const secondary_y = primary_y + text_height + ui.px(line_gap, output_scale);
-            const name_x = geometry.x + m.small_margin + m.icon_size + m.small_margin;
+            const text_top = row_y_px + @divTrunc(row_height_px - text_block, 2);
+            const primary_y = text_top;
+            const secondary_y = primary_y + text_height + line_gap;
+            const name_x = ui.px(
+                geometry.x + m.small_margin + m.icon_size + m.small_margin,
+                output_scale,
+            );
             var label_x = name_x;
 
             if (device.is_default) {
-                const dot = @max(3, @divTrunc(m.icon_size, 8));
                 canvas.roundRect(
-                    ui.px(label_x, output_scale),
-                    ui.px(text_top + @divTrunc(text_height - dot, 2), output_scale),
-                    ui.px(dot, output_scale),
-                    ui.px(dot, output_scale),
-                    ui.px(@divTrunc(dot, 2), output_scale),
+                    label_x,
+                    text_top + @divTrunc(text_height - dot_size, 2),
+                    dot_size,
+                    dot_size,
+                    @divTrunc(dot_size, 2),
                     cfg.accent,
                 );
-                label_x += dot + @divTrunc(m.small_margin, 2);
+                label_x += dot_size + @divTrunc(margin_px, 2);
             }
 
-            var info_left = geometry.x + geometry.w - m.small_margin;
+            var info_left = ui.px(geometry.x + geometry.w - m.small_margin, output_scale);
             var percent_buffer: [8]u8 = undefined;
 
             if (device.mute) {
@@ -598,8 +607,8 @@ pub const Audio = struct {
                 const muted_width = font.textWidth(muted, font_scale);
                 info_left -= muted_width;
                 _ = canvas.text(
-                    ui.px(info_left, output_scale),
-                    ui.px(row_y + @divTrunc(m.row_height - text_height, 2), output_scale),
+                    info_left,
+                    row_y_px + @divTrunc(row_height_px - text_height, 2),
                     muted,
                     cfg.muted,
                     font_scale,
@@ -613,44 +622,41 @@ pub const Audio = struct {
                 const percent_width = font.textWidth(percent_text, font_scale);
                 info_left -= percent_width;
                 _ = canvas.text(
-                    ui.px(info_left, output_scale),
-                    ui.px(row_y + @divTrunc(m.row_height - text_height, 2), output_scale),
+                    info_left,
+                    row_y_px + @divTrunc(row_height_px - text_height, 2),
                     percent_text,
                     cfg.text,
                     font_scale,
                 );
 
-                const bar_x = info_left - m.small_margin - bar_width;
-                const bar_y = row_y + @divTrunc(m.row_height - bar_height, 2);
+                const bar_x = info_left - margin_px - bar_width;
+                const bar_y = row_y_px + @divTrunc(row_height_px - bar_height, 2);
                 canvas.roundRect(
-                    ui.px(bar_x, output_scale),
-                    ui.px(bar_y, output_scale),
-                    ui.px(bar_width, output_scale),
-                    ui.px(bar_height, output_scale),
-                    ui.px(@divTrunc(bar_height, 2), output_scale),
+                    bar_x,
+                    bar_y,
+                    bar_width,
+                    bar_height,
+                    @divTrunc(bar_height, 2),
                     cfg.highlight_low,
                 );
                 const percent = @min(device.percent(), 100);
                 const filled = @divTrunc(bar_width * @as(i32, percent), 100);
                 if (filled > 0) {
                     canvas.roundRect(
-                        ui.px(bar_x, output_scale),
-                        ui.px(bar_y, output_scale),
-                        ui.px(filled, output_scale),
-                        ui.px(bar_height, output_scale),
-                        ui.px(@divTrunc(bar_height, 2), output_scale),
+                        bar_x,
+                        bar_y,
+                        filled,
+                        bar_height,
+                        @divTrunc(bar_height, 2),
                         cfg.accent,
                     );
                 }
                 info_left = bar_x;
             }
 
-            const text_width = ui.px(
-                @max(0, info_left - m.small_margin - label_x),
-                output_scale,
-            );
+            const text_width = @max(0, info_left - margin_px - label_x);
             _ = canvas.textFit(
-                ui.px(label_x, output_scale),
+                label_x,
                 primary_y,
                 device.label(),
                 cfg.text,
@@ -658,7 +664,7 @@ pub const Audio = struct {
                 text_width,
             );
             _ = canvas.textFit(
-                ui.px(label_x, output_scale),
+                label_x,
                 secondary_y,
                 device.name,
                 cfg.muted,
@@ -722,7 +728,7 @@ pub const Audio = struct {
     ) void {
         const m = s.metrics;
         const cfg = s.cfg;
-        const hint_scale = font_scale * 0.7;
+        const hint_scale = font_scale * 0.8;
         const hint_height = ui.textHeight(hint_scale);
         const y = ui.px(@intCast(s.client.logical_height), output_scale) -
             ui.px(m.margin, output_scale) - hint_height;
@@ -730,7 +736,7 @@ pub const Audio = struct {
         const text = if (self.error_len > 0)
             self.errorSlice()
         else
-            "Up/Down select  Left/Right volume  M mute  Enter default  Tab switch  R refresh  Esc close";
+            "Up/Down select  Left/Right volume  M mute  Enter default  Tab  R  Esc";
 
         _ = canvas.textFit(
             ui.px(m.margin, output_scale),
