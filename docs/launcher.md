@@ -20,7 +20,7 @@ draw a list, launch the chosen command.
 
 - **Opens in under 15 ms.** Measured from process start to the compositor
   mapping its layer surface, a ReleaseFast build has a median launch time of
-  **11.2 ms** (10.5–12.8 ms across five runs). Filtering and selection redraws
+  **11.2 ms** (10.5 to 12.8 ms across five runs). Filtering and selection redraws
   are sub-millisecond.
 - **Under 10 MB of RAM.** **8.4 MB** resident after the window opens with 34
   desktop entries loaded. Icon decoding is lazy: only the icons for rows that
@@ -130,19 +130,19 @@ The colour roles are:
 
 | Key | Palette name | Used for |
 | --- | --- | --- |
-| `base` | — | window background |
-| `surface` | — | search field and unselected rows |
+| `base` | n/a | window background |
+| `surface` | n/a | search field and unselected rows |
 | `accent` | foam | search-field focus ring, text cursor, icon-gradient start, volume-gradient start |
 | `dark_accent` | pine | inline “Coming soon” text and placeholder badge |
 | `detail_1` | rose | middle of the control-panel icon gradient |
 | `detail_2` | iris | end of the icon gradient, audio secondary names, fallback initials |
 | `warm_1` | gold | middle of the volume-bar gradient |
 | `warm_2` | love | end of the volume-bar gradient |
-| `text` | — | application/tool names and typed query |
-| `muted` | — | placeholder text, "No matches", footer hints |
-| `highlight_low` | — | hovered row, fallback icon background |
-| `highlight_mid` | — | window border |
-| `highlight_high` | — | selected row |
+| `text` | n/a | application/tool names and typed query |
+| `muted` | n/a | placeholder text, "No matches", footer hints |
+| `highlight_low` | n/a | hovered row, fallback icon background |
+| `highlight_mid` | n/a | window border |
+| `highlight_high` | n/a | selected row |
 
 `warm_1` and `warm_2` are the grouped warm accents (gold and love). All control
 panel icons share the same `accent → detail_1 → detail_2` gradient.

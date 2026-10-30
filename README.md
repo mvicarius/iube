@@ -1,19 +1,5 @@
 # iube
 
-## The name
-
-**iube** comes from Latin *iubeō, iubēre* (“to order, command”). The form
-*iube* (also written *iubē*) is the second-person singular present active
-imperative, so it means **“command!”** or **“order!”**.
-
-The imperative was chosen deliberately. iube is a tool for telling your OS what
-to do — launch this application, connect to that network, change this setting,
-turn that off — rather than a passive settings browser. The name is the action:
-you give the command, and iube carries it out.
-
-- Classical Latin: **[ˈjʊ.beː]** — roughly **YOO-beh**, with a short *u* and a
-  long final *e*.
-
 ## What is iube?
 
 iube is a small, dependency-light control panel for the Linux desktop. It opens
@@ -23,18 +9,32 @@ The project started as an application launcher. It is now growing into a set of
 small OS management tools that share one binary, one theme, one config file and
 one renderer:
 
-- **Application launcher** — implemented (`iube launch`).
-- **Control panel** — implemented (`iube`), listing every tool iube exposes.
-- **Audio manager** — initial implementation (`iube audio`): outputs, inputs,
+- **Application launcher**: implemented (`iube launch`).
+- **Control panel**: implemented (`iube`), listing every tool iube exposes.
+- **Audio manager**: initial implementation (`iube audio`) with outputs, inputs,
   volume, mute and default device.
-- **Bluetooth manager** — planned; placeholder view available (`iube bluetooth`).
-- **Wi-Fi manager** — planned; placeholder view available (`iube wifi`).
-- **Power manager** — planned; placeholder view available (`iube power`).
+- **Bluetooth manager**: planned; placeholder view available (`iube bluetooth`).
+- **Wi-Fi manager**: planned; placeholder view available (`iube wifi`).
+- **Power manager**: planned; placeholder view available (`iube power`).
 
 The management tools talk to the kernel and system services directly instead of
 pulling in GTK, Qt, NetworkManager client libraries, BlueZ client libraries,
 PipeWire client libraries or D-Bus client libraries. See
 [docs/tools.md](docs/tools.md) for the implemented and planned backends.
+
+## The name
+
+**iube** comes from Latin *iubeō, iubēre* (“to order, command”). The form
+*iube* (also written *iubē*) is the second-person singular present active
+imperative, so it means **“command!”** or **“order!”**.
+
+The imperative was chosen deliberately. iube is a tool for telling your OS what
+to do: launch this application, connect to that network, change this setting,
+turn that off. It is not a passive settings browser. The name is the action:
+you give the command, and iube carries it out.
+
+Classical Latin: **[ˈjʊ.beː]**, roughly **YOO-beh**, with a short *u* and a long
+final *e*.
 
 ## Current status
 
@@ -123,11 +123,11 @@ The measurements, configuration reference and implementation notes now live in
 
 ## Documentation
 
-- [docs/launcher.md](docs/launcher.md) — launcher features, performance,
+- [docs/launcher.md](docs/launcher.md): launcher features, performance,
   configuration, controls, layer-shell requirements and implementation notes.
-- [docs/architecture.md](docs/architecture.md) — command dispatch, module
+- [docs/architecture.md](docs/architecture.md): command dispatch, module
   layout, shared view interface and how to add a tool.
-- [docs/tools.md](docs/tools.md) — dependency policy and the implemented and
+- [docs/tools.md](docs/tools.md): dependency policy and the implemented and
   planned audio, Bluetooth, Wi-Fi and power backends.
 
 ## Build
@@ -165,16 +165,16 @@ currently ships that version.
 The four requested tools are the current near-term scope. Several other desktop
 jobs fit the same model and could follow:
 
-- **Display and brightness** — backlight via sysfs, external monitors via DDC,
+- **Display and brightness**: backlight via sysfs, external monitors via DDC,
   and night light/colour temperature via `wlr-gamma-control`.
-- **Session actions** — lock, logout, suspend, reboot and shutdown via logind.
-- **Network overview** — wired, VPN and connection state alongside Wi-Fi.
-- **Clipboard history** — `wlr-data-control` / `ext-data-control`.
-- **Notifications** — the `org.freedesktop.Notifications` D-Bus service.
-- **Media controls** — MPRIS players over D-Bus.
-- **Storage** — mounts and removable media via udisks2.
-- **Input** — keyboard layout and pointer settings.
-- **Screenshots and screen capture** — `wlr-screencopy` / `ext-image-copy-capture`.
+- **Session actions**: lock, logout, suspend, reboot and shutdown via logind.
+- **Network overview**: wired, VPN and connection state alongside Wi-Fi.
+- **Clipboard history**: `wlr-data-control` / `ext-data-control`.
+- **Notifications**: the `org.freedesktop.Notifications` D-Bus service.
+- **Media controls**: MPRIS players over D-Bus.
+- **Storage**: mounts and removable media via udisks2.
+- **Input**: keyboard layout and pointer settings.
+- **Screenshots and screen capture**: `wlr-screencopy` / `ext-image-copy-capture`.
 
 These are ideas, not commitments. The first milestone is to finish the control
 panel structure and the four requested tool views. Audio is the first real

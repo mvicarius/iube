@@ -50,15 +50,15 @@ src/
 
 Every command uses:
 
-- `config.zig` — the same `~/.config/iube/config`, colours, scale and corner
+- `config.zig`: the same `~/.config/iube/config`, colours, scale and corner
   radius.
-- `ui.zig` — the same scaled metrics, key constants, border/body chrome,
+- `ui.zig`: the same scaled metrics, key constants, border/body chrome,
   text height and wrapped-text helper.
-- `render.zig`, `font.zig`, `png.zig` — the same software renderer, bitmap font
+- `render.zig`, `font.zig`, `png.zig`: the same software renderer, bitmap font
   and PNG decoder.
-- `wayland.zig` — the same `wl_shm` buffer management, input handling and
+- `wayland.zig`: the same `wl_shm` buffer management, input handling and
   `zwlr_layer_shell_v1` overlay setup.
-- `session.zig` — the same event loop, key repeat, blinking and cursor-shape
+- `session.zig`: the same event loop, key repeat, blinking and cursor-shape
   handling.
 
 Only the view differs. `audio_view.zig` additionally uses `audio.zig`, which is
