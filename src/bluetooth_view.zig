@@ -17,7 +17,7 @@ const bluetooth = @import("bluetooth.zig");
 
 const base_header_height = 36;
 const base_footer_height = 24;
-const max_visible_rows = 8;
+const discovery_refresh_ms = 2000;
 
 pub const Bluetooth = struct {
     io: std.Io,
@@ -31,6 +31,7 @@ pub const Bluetooth = struct {
     selected: usize = 0,
     hover: ?usize = null,
     scroll: i32 = 0,
+    last_discovery_refresh_ms: i64 = 0,
 
     error_buffer: [256]u8 = undefined,
     error_len: usize = 0,
@@ -58,21 +59,8 @@ pub const Bluetooth = struct {
         self.battery_icon = null;
     }
 
-    pub fn windowSize(self: *Bluetooth, metrics: ui.Metrics) ui.WindowSize {
-        const rows = if (self.state == null)
-            3
-        else
-            std.math.clamp(self.deviceRowCount(), 1, max_visible_rows);
-        const header = ui.scaled(base_header_height, metrics.scale);
-        const footer = ui.scaled(base_footer_height, metrics.scale);
-        const content = @as(i32, @intCast(rows)) * metrics.row_step - metrics.gap;
-        return .{
-            .width = metrics.window_width,
-            .height = @max(
-                1,
-                metrics.margin * 2 + header + metrics.gap + content + footer,
-            ),
-        };
+    pub fn windowSize(_: *Bluetooth, metrics: ui.Metrics) ui.WindowSize {
+        return .{ .width = metrics.window_width, .height = metrics.window_height };
     }
 
     pub fn wantsBlink(_: *Bluetooth) bool {
@@ -80,11 +68,33 @@ pub const Bluetooth = struct {
     }
 
     pub fn tick(self: *Bluetooth, s: *session.Session) void {
-        if (self.error_len == 0 or self.error_deadline_ms == 0) return;
-        if (s.nowMs() < self.error_deadline_ms) return;
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
-        s.dirty = true;
+        if (self.error_len > 0 and self.error_deadline_ms > 0 and s.nowMs() >= self.error_deadline_ms) {
+            self.error_len = 0;
+            self.error_deadline_ms = 0;
+            s.dirty = true;
+        }
+
+        const current_adapter = self.adapter() orelse {
+            self.last_discovery_refresh_ms = 0;
+            return;
+        };
+        if (!current_adapter.powered or !current_adapter.discovering) {
+            self.last_discovery_refresh_ms = 0;
+            return;
+        }
+
+        const now = s.nowMs();
+        if (self.last_discovery_refresh_ms == 0) {
+            self.last_discovery_refresh_ms = now;
+            return;
+        }
+        if (now - self.last_discovery_refresh_ms < discovery_refresh_ms) return;
+
+        self.last_discovery_refresh_ms = now;
+        if (self.refreshState()) {
+            self.ensureSelectionVisible(s);
+            s.dirty = true;
+        }
     }
 
     pub fn overTextField(_: *Bluetooth, _: *session.Session) bool {
@@ -123,7 +133,7 @@ pub const Bluetooth = struct {
 
         if (key.keysym == 'r' or key.keysym == 'R') {
             if (!is_repeat) {
-                self.refreshOrReconnect();
+                self.refreshOrReconnect(s);
                 s.dirty = true;
             }
         }
@@ -195,6 +205,9 @@ pub const Bluetooth = struct {
         self.error_len = 0;
         self.error_deadline_ms = 0;
 
+        var path_buffer: [256]u8 = undefined;
+        const previous_path = self.copySelectedPath(&path_buffer);
+
         if (self.state) |*state| state.deinit();
         if (self.client) |*client| client.deinit();
         self.state = null;
@@ -214,16 +227,23 @@ pub const Bluetooth = struct {
 
         self.client = client;
         self.state = state;
-        self.clampSelection();
+        self.selectByPath(previous_path);
+        self.last_discovery_refresh_ms = 0;
     }
 
-    fn refreshOrReconnect(self: *Bluetooth) void {
-        if (self.client != null and self.refreshState()) return;
+    fn refreshOrReconnect(self: *Bluetooth, s: *session.Session) void {
+        if (self.client != null and self.refreshState()) {
+            self.ensureSelectionVisible(s);
+            return;
+        }
         self.reload();
+        self.ensureSelectionVisible(s);
     }
 
     fn refreshState(self: *Bluetooth) bool {
         const client = if (self.client) |*value| value else return false;
+        var path_buffer: [256]u8 = undefined;
+        const previous_path = self.copySelectedPath(&path_buffer);
         const state = client.refresh(self.gpa) catch |err| {
             self.setError("Bluetooth refresh failed", err);
             return false;
@@ -231,8 +251,29 @@ pub const Bluetooth = struct {
 
         if (self.state) |*old| old.deinit();
         self.state = state;
-        self.clampSelection();
+        self.selectByPath(previous_path);
         return true;
+    }
+
+    fn copySelectedPath(self: *Bluetooth, buffer: *[256]u8) ?[]const u8 {
+        const device = self.currentDevice() orelse return null;
+        if (device.path.len > buffer.len) return null;
+        @memcpy(buffer[0..device.path.len], device.path);
+        return buffer[0..device.path.len];
+    }
+
+    fn selectByPath(self: *Bluetooth, path: ?[]const u8) void {
+        if (path) |wanted| {
+            if (self.devices()) |list| {
+                for (list, 0..) |device, index| {
+                    if (std.mem.eql(u8, device.path, wanted)) {
+                        self.selected = index;
+                        return;
+                    }
+                }
+            }
+        }
+        self.clampSelection();
     }
 
     fn nowMs(self: *const Bluetooth) i64 {
@@ -268,11 +309,6 @@ pub const Bluetooth = struct {
 
     fn errorSlice(self: *const Bluetooth) []const u8 {
         return self.error_buffer[0..self.error_len];
-    }
-
-    fn deviceRowCount(self: *const Bluetooth) usize {
-        const state = if (self.state) |*value| value else return 0;
-        return state.devices.len;
     }
 
     fn devices(self: *Bluetooth) ?[]bluetooth.Device {
@@ -325,11 +361,13 @@ pub const Bluetooth = struct {
 
         client.setAdapterPowered(active_adapter, !active_adapter.powered) catch |err| {
             _ = self.refreshState();
+            self.ensureSelectionVisible(s);
             self.setError("Power change failed", err);
             s.dirty = true;
             return;
         };
         _ = self.refreshState();
+        self.ensureSelectionVisible(s);
         s.dirty = true;
     }
 
@@ -351,6 +389,7 @@ pub const Bluetooth = struct {
 
         client.setDiscovering(active_adapter, desired) catch |err| {
             _ = self.refreshState();
+            self.ensureSelectionVisible(s);
             if (self.adapter()) |current| {
                 if (current.discovering == desired) {
                     self.error_len = 0;
@@ -363,6 +402,7 @@ pub const Bluetooth = struct {
             return;
         };
         _ = self.refreshState();
+        self.ensureSelectionVisible(s);
         s.dirty = true;
     }
 
@@ -373,11 +413,13 @@ pub const Bluetooth = struct {
 
         client.setConnected(device.*, !device.connected) catch |err| {
             _ = self.refreshState();
+            self.ensureSelectionVisible(s);
             self.setError("Connection change failed", err);
             s.dirty = true;
             return;
         };
         _ = self.refreshState();
+        self.ensureSelectionVisible(s);
         s.dirty = true;
     }
 

@@ -189,6 +189,7 @@ fn parseManagedObjects(gpa: std.mem.Allocator, body: []const u8) !State {
             if (device.adapter_path.len == 0) device.adapter_path = adapter_slice[0].path;
         }
     }
+    std.mem.sort(Device, device_slice, {}, deviceLessThan);
 
     return .{
         .arena = arena,
@@ -283,10 +284,35 @@ fn parseBatteryProperties(reader: *dbus.Reader) !?u8 {
     return percentage;
 }
 
+fn deviceRank(device: Device) u2 {
+    if (device.connected) return 0;
+    if (device.paired) return 1;
+    return 2;
+}
+
+fn deviceLessThan(_: void, a: Device, b: Device) bool {
+    const rank_a = deviceRank(a);
+    const rank_b = deviceRank(b);
+    if (rank_a != rank_b) return rank_a < rank_b;
+    return std.ascii.lessThanIgnoreCase(a.label(), b.label());
+}
+
 fn finishArray(reader: *dbus.Reader, end: usize) !void {
     if (reader.index > end) return error.Protocol;
     if (end - reader.index >= 8) return error.Protocol;
     reader.index = end;
+}
+
+test "devices sort connected then paired then new" {
+    var devices = [_]Device{
+        .{ .path = "/new", .adapter_path = "", .name = "New", .address = "" },
+        .{ .path = "/paired", .adapter_path = "", .name = "Paired", .address = "", .paired = true },
+        .{ .path = "/connected", .adapter_path = "", .name = "Connected", .address = "", .paired = true, .connected = true },
+    };
+    std.mem.sort(Device, &devices, {}, deviceLessThan);
+    try std.testing.expectEqualStrings("Connected", devices[0].name);
+    try std.testing.expectEqualStrings("Paired", devices[1].name);
+    try std.testing.expectEqualStrings("New", devices[2].name);
 }
 
 test "device state and label" {

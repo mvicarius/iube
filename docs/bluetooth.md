@@ -32,12 +32,17 @@ does not replace `bluetoothd`.
 - `R` refreshes the object tree.
 - `Esc` closes.
 
+While discovery is active, iube refreshes the device tree automatically every
+two seconds. Devices are ordered with connected devices first, paired devices
+second, and new/unpaired devices last.
+
 The header shows the adapter name and its current state: `On`, `Off`, or
 `Discovering`. Device rows show the name, address and connection state. Connected
 devices show a battery icon, bar and fixed-width percentage; non-connected
 devices show a signal icon, bar and fixed-width percentage. Signal percentages
 map RSSI values from `-100` to `-30` dBm onto `0` to `100%`. Missing values use
-`--` with an empty bar.
+`--` with an empty bar. The window uses the same 640×360 default size as the
+launcher and scrolls when the device list grows.
 
 ## Current limitations
 
