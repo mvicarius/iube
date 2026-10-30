@@ -105,6 +105,7 @@ def main() -> None:
         ("iube launch", ["launch"]),
         ("iube audio", ["audio"]),
         ("iube bluetooth", ["bluetooth"]),
+        ("iube wifi", ["wifi"]),
     ]
 
     print("| Command | Open (median) | Peak RSS |")

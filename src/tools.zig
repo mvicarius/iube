@@ -52,8 +52,8 @@ pub const all = [_]Tool{
         .id = "wifi",
         .name = "Wi-Fi",
         .description = "Scan, connect and inspect wireless networks.",
-        .status = .coming_soon,
-        .backend = "nl80211 generic netlink, with a wpa_supplicant control socket.",
+        .status = .available,
+        .backend = "NetworkManager over the system D-Bus.",
         .icon = @embedFile("icons/wifi.png"),
     },
     .{

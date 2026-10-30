@@ -1,8 +1,8 @@
 # Tool backends
 
-This document describes how the planned iube management tools are meant to
-work. None of these backends are implemented yet; the commands currently open
-the placeholder view from `src/placeholder.zig`.
+This document describes how the iube management tools are meant to work, and
+how the implemented ones choose their backend. Audio, Bluetooth and Wi-Fi are
+implemented; the remaining entries are plans.
 
 ## Dependency policy
 
@@ -34,13 +34,14 @@ Rules for every tool:
    Bluetooth pairing data are handed to the system service and never written to
    iube's config or log.
 
-Two small pieces of infrastructure will be shared by several tools and are
-worth implementing once:
+Two small pieces of infrastructure are shared by several tools:
 
 - A minimal D-Bus client over the system/user bus socket, with `EXTERNAL`
-  authentication, `Hello`, match rules, method calls and variant parsing. This
-  serves BlueZ, logind and optionally power-profiles-daemon.
-- Thin helpers around netlink messages and sysfs reads/writes.
+  authentication, `Hello`, match rules, method calls and variant parsing. It
+  lives in `src/dbus.zig` and serves BlueZ, NetworkManager and, eventually,
+  logind and power-profiles-daemon.
+- Thin helpers around netlink messages and sysfs reads/writes. sysfs reads are
+  ordinary file I/O today; netlink helpers are still planned.
 
 Both are ordinary Zig code over `std.posix` sockets and file I/O. They do not
 require `libdbus`, `libsystemd` or `libnm`.
@@ -59,10 +60,20 @@ BlueZ integration, controls, limitations and planned work, lives in
 
 ## Wi-Fi (`iube wifi`)
 
-**Goal:** scan, connect, disconnect and inspect wireless networks without
-linking NetworkManager, iwd or wpa_supplicant client libraries.
+**Status:** initial implementation. The dedicated documentation, including the
+NetworkManager integration, controls, limitations and planned work, lives in
+[wifi.md](wifi.md).
 
-### Planned interfaces
+The first backend is NetworkManager over the system D-Bus. NetworkManager
+already owns the wireless interface, supplicant and saved profiles on most
+desktops, so using it avoids two processes fighting over the radio. The Wi-Fi
+view can scan, list access points, connect to saved profiles, disconnect and
+toggle wireless.
+
+### Future direct backend
+
+If NetworkManager is not present, the long-term plan is to read the interface
+and scan results directly and use the existing supplicant for association:
 
 - **nl80211 generic netlink for scanning and link state.** Open an
   `AF_NETLINK`/`NETLINK_GENERIC` socket, resolve the `nl80211` family, and use
@@ -80,15 +91,6 @@ linking NetworkManager, iwd or wpa_supplicant client libraries.
   the interface, iube should either use that manager's documented interface or
   open read-only. Two tools fighting over `wpa_supplicant` is worse than a
   missing feature.
-
-### UI shape
-
-- Enable/disable the radio via rfkill.
-- Network list with SSID, signal, security, and connected marker.
-- Connect dialog for passphrases; "forget" for saved networks.
-- Current link details: address, signal, frequency, security.
-- Keyboard-first navigation with the same `Up`/`Down`/`Enter`/`Esc` model as
-  the launcher.
 
 ### Constraints
 
