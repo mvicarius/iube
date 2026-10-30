@@ -47,61 +47,9 @@ require `libdbus`, `libsystemd` or `libnm`.
 
 ## Audio (`iube audio`)
 
-**Status:** initial implementation in `src/audio.zig` and `src/audio_view.zig`.
-
-**Goal:** output volume, mute, input level and default devices without a volume
-daemon of iube's own, and without linking libpulse or libpipewire.
-
-**Why ALSA and PipeWire both appear below:** they are different layers, not two
-alternatives that iube needs at once. ALSA is the kernel/driver interface that
-every Linux sound device goes through. PipeWire is a userspace sound server, and
-its `pipewire-pulse` component exposes the PulseAudio-compatible socket that
-iube uses now. The current implementation therefore needs only that socket:
-PipeWire provides it on most modern systems, or PulseAudio provides it on older
-ones. The ALSA fallback is for bare systems with no sound server, and the
-PipeWire native protocol is an optional future path for deeper routing control.
-
-### Implemented
-
-- **PulseAudio native protocol, version 12.** Connect to
-  `$XDG_RUNTIME_DIR/pulse/native`, authenticate with the user's PulseAudio
-  cookie, and exchange length-prefixed tagstruct packets over the Unix socket.
-  Both PulseAudio and `pipewire-pulse` expose this socket, so the same client
-  covers the two common desktop audio stacks.
-- **Device discovery.** `GET_SERVER_INFO`, `GET_SINK_INFO_LIST` and
-  `GET_SOURCE_INFO_LIST` supply the default sink/source and the device lists.
-  Monitor sources are filtered out of the input list.
-- **Controls.** `SET_SINK_VOLUME`, `SET_SOURCE_VOLUME`, `SET_SINK_MUTE`,
-  `SET_SOURCE_MUTE`, `SET_DEFAULT_SINK` and `SET_DEFAULT_SOURCE`.
-- **UI.** `Tab` switches Outputs/Inputs, `Up`/`Down` selects, `Left`/`Right`
-  changes volume in 5% steps, `M` mutes, `Enter` sets the default, `R`
-  refreshes and `Esc` closes. Volume bars, mute state and the default marker use
-  the shared theme.
-
-### Next
-
-- **Optional ALSA fallback.** On systems without a PulseAudio-compatible socket,
-  read and write mixer controls through `/dev/snd/controlC*` using the kernel's
-  ALSA control ioctls. ALSA is already underneath PipeWire/PulseAudio; this
-  fallback does not add a required dependency.
-- **Per-application streams.** Add `GET_SINK_INPUT_INFO_LIST` and support
-  volume, mute and move-to-device for playback streams.
-- **Live updates.** Subscribe to `PA_COMMAND_SUBSCRIBE` events instead of
-  refreshing only when the window opens or the user presses `R`.
-- **Optional PipeWire native protocol.** Deeper graph and per-application
-  routing could skip the PulseAudio compatibility layer. It is more complex and
-  less of a stable public client ABI, so it remains a later target and is not
-  required for normal device control.
-- **Output/input level meters.** Read stream peaks without keeping a playback
-  stream open in iube.
-
-### Open questions
-
-- Whether the ALSA fallback should control hardware mixers directly or defer to
-  `alsactl` state. Some laptops route volume through a DSP, so control names
-  vary.
-- Whether subscription events are worth the extra socket/event-loop work in the
-  first release, or whether refresh-on-open is enough.
+**Status:** initial implementation. The dedicated documentation, including the
+protocol details, controls, limitations and planned work, lives in
+[audio.md](audio.md).
 
 ## Bluetooth (`iube bluetooth`)
 

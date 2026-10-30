@@ -11,8 +11,7 @@ one renderer:
 
 - **Application launcher**: implemented (`iube launch`).
 - **Control panel**: implemented (`iube`), listing every tool iube exposes.
-- **Audio manager**: initial implementation (`iube audio`) with outputs, inputs,
-  volume, mute and default device.
+- **Audio manager**: initial implementation (`iube audio`).
 - **Bluetooth manager**: planned; placeholder view available (`iube bluetooth`).
 - **Wi-Fi manager**: planned; placeholder view available (`iube wifi`).
 - **Power manager**: planned; placeholder view available (`iube power`).
@@ -58,7 +57,7 @@ currently applies to Bluetooth, Wi-Fi and Power.
 ```sh
 iube             # control panel: every tool, all entries visible, no search
 iube launch      # application launcher (the original iube experience)
-iube audio       # output/input volume, mute and default device
+iube audio       # open the audio controller
 iube bluetooth   # bluetooth tool (placeholder for now)
 iube wifi        # Wi-Fi tool (placeholder for now)
 iube power       # power tool (placeholder for now)
@@ -81,25 +80,6 @@ layer-shell window setup. Selecting an entry in the control panel hands off to
 the matching `iube <tool>` process and exits, so the selected path still starts
 with only its own work.
 
-## Audio controls
-
-`iube audio` talks to `$XDG_RUNTIME_DIR/pulse/native` directly. That socket is
-provided by PulseAudio and by `pipewire-pulse`, so no libpulse or PipeWire
-client library is linked.
-
-- `Tab` switches between outputs and inputs.
-- `Up` / `Down` selects a device.
-- `Left` / `Right` changes volume in 5% steps.
-- `M` toggles mute.
-- `Enter` makes the selected device the default.
-- `R` refreshes the device list.
-- `Esc` closes.
-
-The initial implementation lists real sinks and real capture sources (monitor
-sources are filtered out) and changes their volume, mute and default state
-directly. Per-application streams, the ALSA fallback and live subscription
-updates are still planned.
-
 ## Design goals
 
 - **One binary, one process per invocation.** No resident daemon, no index, no
@@ -119,12 +99,15 @@ updates are still planned.
 
 The application launcher still has its original performance characteristics.
 The measurements, configuration reference and implementation notes now live in
-[docs/launcher.md](docs/launcher.md).
+[docs/launcher.md](docs/launcher.md). The audio controller's protocol, controls
+and limitations live in [docs/audio.md](docs/audio.md).
 
 ## Documentation
 
 - [docs/launcher.md](docs/launcher.md): launcher features, performance,
   configuration, controls, layer-shell requirements and implementation notes.
+- [docs/audio.md](docs/audio.md): audio protocol, controls, limitations and
+  planned work.
 - [docs/architecture.md](docs/architecture.md): command dispatch, module
   layout, shared view interface and how to add a tool.
 - [docs/tools.md](docs/tools.md): dependency policy and the implemented and
