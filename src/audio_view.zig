@@ -574,7 +574,7 @@ pub const Audio = struct {
                 icon_x + @divTrunc(icon_px - initial_width, 2),
                 icon_y + @divTrunc(icon_px - text_height, 2),
                 initial,
-                cfg.detail,
+                cfg.detail_2,
                 font_scale,
             );
 
@@ -594,7 +594,7 @@ pub const Audio = struct {
                     dot_size,
                     dot_size,
                     @divTrunc(dot_size, 2),
-                    cfg.detail,
+                    cfg.detail_2,
                 );
                 label_x += dot_size + @divTrunc(margin_px, 2);
             }
@@ -645,7 +645,7 @@ pub const Audio = struct {
                         bar_height,
                         @divTrunc(bar_height, 2),
                         filled,
-                        &.{ cfg.accent, cfg.gold, cfg.love },
+                        &.{ cfg.accent, cfg.warm_1, cfg.warm_2 },
                     );
                 }
                 info_left = bar_x;
@@ -664,7 +664,7 @@ pub const Audio = struct {
                 label_x,
                 secondary_y,
                 device.name,
-                cfg.detail,
+                cfg.detail_2,
                 secondary_scale,
                 text_width,
             );

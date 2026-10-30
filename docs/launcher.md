@@ -110,10 +110,12 @@ corner_radius = 12
 # Rosé Pine defaults, shown here for clarity.
 base = #191724
 surface = #1f1d2e
-accent = #9ccfd8
-detail = #c4a7e7
-gold = #f6c177
-love = #eb6f92
+accent = #9ccfd8      # foam
+dark_accent = #31748f # pine
+detail_1 = #ebbcba    # rose
+detail_2 = #c4a7e7    # iris
+warm_1 = #f6c177      # gold
+warm_2 = #eb6f92      # love
 text = #e0def4
 muted = #6e6a86
 highlight_low = #21202e
@@ -126,19 +128,25 @@ a `0x` prefix. Invalid values are reported at startup and the default is kept.
 
 The colour roles are:
 
-| Key | Used for |
-| --- | --- |
-| `base` | window background |
-| `surface` | search field and unselected rows |
-| `accent` | search-field focus ring, text cursor, start of the volume gradient |
-| `detail` | secondary device names, fallback icon initials, inline “Coming soon” text |
-| `gold` | middle of the volume-bar gradient |
-| `love` | end of the volume-bar gradient |
-| `text` | application/tool names and typed query |
-| `muted` | placeholder text, "No matches", footer hints |
-| `highlight_low` | hovered row, fallback icon and badge background |
-| `highlight_mid` | window border |
-| `highlight_high` | selected row |
+| Key | Palette name | Used for |
+| --- | --- | --- |
+| `base` | — | window background |
+| `surface` | — | search field and unselected rows |
+| `accent` | foam | search-field focus ring, text cursor, launcher icon, volume-gradient start |
+| `dark_accent` | pine | selected control-panel row and hover tint |
+| `detail_1` | rose | Wi-Fi icon |
+| `detail_2` | iris | audio secondary names, Bluetooth icon, fallback icon initials |
+| `warm_1` | gold | Power icon, inline “Coming soon” text, volume-gradient middle |
+| `warm_2` | love | Audio icon, volume-gradient end |
+| `text` | — | application/tool names and typed query |
+| `muted` | — | placeholder text, "No matches", footer hints |
+| `highlight_low` | — | hovered launcher row, fallback icon background |
+| `highlight_mid` | — | window border |
+| `highlight_high` | — | selected launcher row |
+
+`warm_1` and `warm_2` are the grouped warm accents (gold and love). The old
+keys `detail`, `gold` and `love`, plus the palette names `foam`, `pine`, `rose`
+and `iris`, are still accepted as aliases.
 
 ## Launcher controls
 
