@@ -112,6 +112,8 @@ base = #191724
 surface = #1f1d2e
 accent = #9ccfd8
 detail = #c4a7e7
+gold = #f6c177
+love = #eb6f92
 text = #e0def4
 muted = #6e6a86
 highlight_low = #21202e
@@ -128,8 +130,10 @@ The colour roles are:
 | --- | --- |
 | `base` | window background |
 | `surface` | search field and unselected rows |
-| `accent` | search-field focus ring, text cursor, volume bars |
-| `detail` | secondary device names, fallback icon initials, status details |
+| `accent` | search-field focus ring, text cursor, start of the volume gradient |
+| `detail` | secondary device names, fallback icon initials, inline “Coming soon” text |
+| `gold` | middle of the volume-bar gradient |
+| `love` | end of the volume-bar gradient |
 | `text` | application/tool names and typed query |
 | `muted` | placeholder text, "No matches", footer hints |
 | `highlight_low` | hovered row, fallback icon and badge background |

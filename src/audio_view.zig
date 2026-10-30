@@ -642,13 +642,14 @@ pub const Audio = struct {
                 const percent = @min(device.percent(), 100);
                 const filled = @divTrunc(bar_width * @as(i32, percent), 100);
                 if (filled > 0) {
-                    canvas.roundRect(
+                    canvas.roundRectGradient(
                         bar_x,
                         bar_y,
-                        filled,
+                        bar_width,
                         bar_height,
                         @divTrunc(bar_height, 2),
-                        cfg.accent,
+                        filled,
+                        &.{ cfg.accent, cfg.gold, cfg.love },
                     );
                 }
                 info_left = bar_x;
