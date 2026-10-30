@@ -32,6 +32,10 @@ src/
   launcher.zig     application launcher: .desktop scan, search, launch
   audio_view.zig   audio controller: outputs, inputs, volume, mute, default
   audio.zig        PulseAudio native-protocol client (no libpulse)
+  bluetooth_view.zig  Bluetooth controller: adapter and device list
+  bluetooth_worker.zig  long-lived Bluetooth job worker
+  bluetooth.zig    BlueZ object model over D-Bus (no BlueZ client library)
+  dbus.zig         minimal system D-Bus client (no libdbus)
 
   placeholder.zig  "coming soon" view for unfinished tools
   tools.zig        tool registry (id, name, description, status, backend note)
@@ -61,8 +65,9 @@ Every command uses:
 - `session.zig`: the same event loop, key repeat, blinking and cursor-shape
   handling.
 
-Only the view differs. `audio_view.zig` additionally uses `audio.zig`, which is
-specific to the audio tool but still linked without any new dependency.
+Only the view differs. `audio_view.zig` additionally uses `audio.zig`, and
+`bluetooth_view.zig` uses `bluetooth.zig` and `dbus.zig`. These are specific to
+their tools but still linked without any new dependency.
 
 ## View interface
 

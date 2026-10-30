@@ -70,6 +70,7 @@ pub const Audio = struct {
 
     error_buffer: [256]u8 = undefined,
     error_len: usize = 0,
+    error_deadline_ms: i64 = 0,
 
     pub fn init(io: std.Io, gpa: std.mem.Allocator, env: audio.Env) Audio {
         var view = Audio{
@@ -109,13 +110,20 @@ pub const Audio = struct {
         return false;
     }
 
+    pub fn tick(self: *Audio, s: *session.Session) void {
+        if (self.error_len == 0 or self.error_deadline_ms == 0) return;
+        if (s.nowMs() < self.error_deadline_ms) return;
+        self.error_len = 0;
+        self.error_deadline_ms = 0;
+        s.dirty = true;
+    }
+
     pub fn overTextField(_: *Audio, _: *session.Session) bool {
         return false;
     }
 
     pub fn handleKey(self: *Audio, s: *session.Session, key: wayland.Key, is_repeat: bool) void {
         if (!key.pressed) return;
-        _ = is_repeat;
 
         if (key.mods.ctrl or key.mods.alt or key.mods.super) return;
 
@@ -157,13 +165,15 @@ pub const Audio = struct {
         }
 
         if (key.keysym == 'm' or key.keysym == 'M') {
-            self.toggleMute(s);
+            if (!is_repeat) self.toggleMute(s);
             return;
         }
 
         if (key.keysym == 'r' or key.keysym == 'R') {
-            self.reload();
-            s.dirty = true;
+            if (!is_repeat) {
+                self.reload();
+                s.dirty = true;
+            }
         }
     }
 
@@ -247,6 +257,7 @@ pub const Audio = struct {
 
     fn reload(self: *Audio) void {
         self.error_len = 0;
+        self.error_deadline_ms = 0;
 
         if (self.state) |*state| state.deinit();
         if (self.client) |*client| client.deinit();
@@ -254,13 +265,13 @@ pub const Audio = struct {
         self.client = null;
 
         var client = audio.Client.connect(self.io, self.gpa, self.env) catch |err| {
-            self.setError("Audio unavailable", err);
+            self.setFatalError("Audio unavailable", err);
             self.clampSelection();
             return;
         };
         const state = client.refresh(self.gpa) catch |err| {
             client.deinit();
-            self.setError("Audio unavailable", err);
+            self.setFatalError("Audio unavailable", err);
             self.clampSelection();
             return;
         };
@@ -270,6 +281,10 @@ pub const Audio = struct {
         self.clampSelection();
     }
 
+    fn nowMs(self: *const Audio) i64 {
+        return std.Io.Clock.Timestamp.now(self.io, .awake).raw.toMilliseconds();
+    }
+
     fn setError(self: *Audio, prefix: []const u8, err: anyerror) void {
         const text: []const u8 = std.fmt.bufPrint(
             &self.error_buffer,
@@ -277,6 +292,17 @@ pub const Audio = struct {
             .{ prefix, @errorName(err) },
         ) catch "Audio error";
         self.error_len = text.len;
+        self.error_deadline_ms = self.nowMs() + 5000;
+    }
+
+    fn setFatalError(self: *Audio, prefix: []const u8, err: anyerror) void {
+        const text: []const u8 = std.fmt.bufPrint(
+            &self.error_buffer,
+            "{s}: {s}",
+            .{ prefix, @errorName(err) },
+        ) catch "Audio error";
+        self.error_len = text.len;
+        self.error_deadline_ms = 0;
     }
 
     fn errorSlice(self: *const Audio) []const u8 {
@@ -370,12 +396,13 @@ pub const Audio = struct {
     fn tabRects(s: *session.Session) [2]TabRect {
         const m = s.metrics;
         const width: i32 = @intCast(s.client.logical_width);
-        const text_scale = s.cfg.scale;
+        const text_scale = ui.logicalFontScale(s.cfg);
+        const dimension_scale = s.cfg.scale;
         const padding = m.small_margin;
         const outputs_width = font.textWidth("Outputs", text_scale) + padding * 2;
         const inputs_width = font.textWidth("Inputs", text_scale) + padding * 2;
-        const tab_height = ui.scaled(base_tab_height, text_scale);
-        const header_height = ui.scaled(base_header_height, text_scale);
+        const tab_height = ui.scaled(base_tab_height, dimension_scale);
+        const header_height = ui.scaled(base_header_height, dimension_scale);
         const y = m.margin + @divTrunc(header_height - tab_height, 2);
         const inputs_x = width - m.margin - inputs_width;
         const outputs_x = inputs_x - m.gap - outputs_width;
@@ -690,7 +717,7 @@ pub const Audio = struct {
             ui.px(x, output_scale),
             ui.px(y, output_scale),
             "Audio backend unavailable",
-            cfg.text,
+            cfg.warm_2,
             font_scale,
         );
 
@@ -704,7 +731,7 @@ pub const Audio = struct {
             width,
             line_height,
             self.errorSlice(),
-            cfg.muted,
+            cfg.warm_2,
             body_scale,
         );
         _ = canvas.text(
@@ -739,7 +766,7 @@ pub const Audio = struct {
             ui.px(m.margin, output_scale),
             y,
             text,
-            if (self.error_len > 0) cfg.accent else cfg.muted,
+            if (self.error_len > 0) cfg.warm_2 else cfg.muted,
             hint_scale,
             width,
         );

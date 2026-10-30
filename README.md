@@ -12,7 +12,7 @@ one renderer:
 - **Application launcher**: implemented (`iube launch`).
 - **Control panel**: implemented (`iube`), listing every tool iube exposes.
 - **Audio manager**: initial implementation (`iube audio`).
-- **Bluetooth manager**: planned; placeholder view available (`iube bluetooth`).
+- **Bluetooth manager**: initial implementation (`iube bluetooth`).
 - **Wi-Fi manager**: planned; placeholder view available (`iube wifi`).
 - **Power manager**: planned; placeholder view available (`iube power`).
 
@@ -43,14 +43,14 @@ final *e*.
 | Application launcher | **Available** | `iube launch` |
 | Shared config, theme and renderer | **Available** | all commands |
 | Audio | **Initial implementation** | `iube audio` |
-| Bluetooth | Placeholder ("coming soon") | `iube bluetooth` |
+| Bluetooth | **Initial implementation** | `iube bluetooth` |
 | Wi-Fi | Placeholder ("coming soon") | `iube wifi` |
 | Power | Placeholder ("coming soon") | `iube power` |
 
 "Placeholder" means the command already opens a real iube window with the
 shared theme and window behaviour. It shows the tool name, a **Coming soon**
 badge and the planned backend. The tool itself is not implemented yet. This
-currently applies to Bluetooth, Wi-Fi and Power.
+currently applies to Wi-Fi and Power.
 
 ## How the commands work
 
@@ -58,7 +58,7 @@ currently applies to Bluetooth, Wi-Fi and Power.
 iube             # control panel: every tool, all entries visible, no search
 iube launch      # application launcher (the original iube experience)
 iube audio       # open the audio controller
-iube bluetooth   # bluetooth tool (placeholder for now)
+iube bluetooth   # open the Bluetooth controller
 iube wifi        # Wi-Fi tool (placeholder for now)
 iube power       # power tool (placeholder for now)
 iube help        # command list
@@ -71,8 +71,8 @@ The paths are deliberately separate:
   load icons or initialise launcher state.
 - `iube launch` builds only the launcher. It does **not** build the panel or
   inspect the tool registry beyond dispatch.
-- `iube <tool>` builds only that tool's view. Audio is a real view; Bluetooth,
-  Wi-Fi and Power are still placeholders.
+- `iube <tool>` builds only that tool's view. Audio and Bluetooth are real
+  views; Wi-Fi and Power are still placeholders.
 
 All paths load the same `~/.config/iube/config`, compute the same scaled
 metrics, use the same `wl_shm` renderer, font, colours, rounded rectangles and
@@ -99,8 +99,9 @@ with only its own work.
 
 The application launcher still has its original performance characteristics.
 The measurements, configuration reference and implementation notes now live in
-[docs/launcher.md](docs/launcher.md). The audio controller's protocol, controls
-and limitations live in [docs/audio.md](docs/audio.md).
+[docs/launcher.md](docs/launcher.md). The audio and Bluetooth controllers have
+dedicated documentation in [docs/audio.md](docs/audio.md) and
+[docs/bluetooth.md](docs/bluetooth.md).
 
 ## Documentation
 
@@ -108,6 +109,8 @@ and limitations live in [docs/audio.md](docs/audio.md).
   configuration, controls, layer-shell requirements and implementation notes.
 - [docs/audio.md](docs/audio.md): audio protocol, controls, limitations and
   planned work.
+- [docs/bluetooth.md](docs/bluetooth.md): BlueZ integration, controls,
+  limitations and planned work.
 - [docs/architecture.md](docs/architecture.md): command dispatch, module
   layout, shared view interface and how to add a tool.
 - [docs/tools.md](docs/tools.md): dependency policy and the implemented and
@@ -160,8 +163,8 @@ jobs fit the same model and could follow:
 - **Screenshots and screen capture**: `wlr-screencopy` / `ext-image-copy-capture`.
 
 These are ideas, not commitments. The first milestone is to finish the control
-panel structure and the four requested tool views. Audio is the first real
-backend and is in progress; Bluetooth, Wi-Fi and power still need theirs.
+panel structure and the four requested tool views. Audio and Bluetooth have
+initial backends; Wi-Fi and power still need theirs.
 
 ## Credits
 

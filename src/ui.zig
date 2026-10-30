@@ -110,8 +110,16 @@ pub fn px(value: i32, scale: i32) i32 {
     return value * scale;
 }
 
+/// Slightly larger than the raw bitmap size so body text reads better by
+/// default without changing the configured layout scale.
+pub const base_text_scale: f32 = 1.125;
+
 pub fn fontScale(cfg: config.Config, output_scale: i32) f32 {
-    return cfg.scale * @as(f32, @floatFromInt(output_scale));
+    return cfg.scale * @as(f32, @floatFromInt(output_scale)) * base_text_scale;
+}
+
+pub fn logicalFontScale(cfg: config.Config) f32 {
+    return cfg.scale * base_text_scale;
 }
 
 pub fn textHeight(glyph_scale: f32) i32 {

@@ -106,6 +106,10 @@ pub fn run(
 
         const after = session.nowMs();
 
+        if (@hasDecl(@TypeOf(view.*), "tick")) {
+            view.tick(&session);
+        }
+
         if (session.repeat_at) |repeat_at| {
             if (after >= repeat_at) {
                 if (session.last_key) |key| {
