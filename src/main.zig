@@ -96,7 +96,8 @@ fn runLauncher(init: std.process.Init, env: config.Env) !void {
 }
 
 fn runPanel(init: std.process.Init, env: config.Env) !void {
-    var view = panel.Panel{};
+    var view = panel.Panel.init(init.gpa);
+    defer view.deinit();
     try session.run(init.io, init.gpa, env, &view);
 }
 

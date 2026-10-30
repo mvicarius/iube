@@ -1,0 +1,19 @@
+Font Awesome Free 6.7.2
+Copyright 2024 Fonticons, Inc.
+https://fontawesome.com
+
+Source: https://github.com/FortAwesome/Font-Awesome
+Icons license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Fonts license: SIL OFL 1.1
+Code license: MIT
+
+Icons used by iube:
+  rocket.png       solid/rocket.svg
+  volume-high.png  solid/volume-high.svg
+  bluetooth.png    brands/bluetooth.svg
+  wifi.png         solid/wifi.svg
+  power-off.png    solid/power-off.svg
+
+Changes: the original SVGs were rendered to 128x128 white PNGs on a
+transparent background. The renderer tints them with the active theme at
+runtime.

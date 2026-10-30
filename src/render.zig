@@ -260,7 +260,20 @@ pub const Canvas = struct {
     /// Draw an image scaled into the target rectangle. Downscaling uses a
     /// small box filter; upscaling uses nearest-neighbour sampling.
     pub fn image(self: *Canvas, x: i32, y: i32, w: i32, h: i32, img: *const png.Image) void {
-        if (w <= 0 or h <= 0 or img.width == 0 or img.height == 0) return;
+        self.imageTinted(x, y, w, h, img, .{ .r = 255, .g = 255, .b = 255 });
+    }
+
+    /// Draw a monochrome image multiplied by `tint`, preserving its alpha.
+    pub fn imageTinted(
+        self: *Canvas,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        img: *const png.Image,
+        tint: Color,
+    ) void {
+        if (w <= 0 or h <= 0 or img.width == 0 or img.height == 0 or tint.a == 0) return;
 
         const x0 = @max(self.clip_x0, x);
         const y0 = @max(self.clip_y0, y);
@@ -312,7 +325,13 @@ pub const Canvas = struct {
                     .b = @intCast(sum_b / sum_a),
                     .a = @intCast(sum_a / count),
                 };
-                self.blend(px, py, color, 255);
+                const tinted = Color{
+                    .r = @intCast((@as(u32, color.r) * tint.r + 127) / 255),
+                    .g = @intCast((@as(u32, color.g) * tint.g + 127) / 255),
+                    .b = @intCast((@as(u32, color.b) * tint.b + 127) / 255),
+                    .a = @intCast((@as(u32, color.a) * tint.a + 127) / 255),
+                };
+                self.blend(px, py, tinted, 255);
             }
         }
     }

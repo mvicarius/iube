@@ -19,6 +19,8 @@ pub const Tool = struct {
     status: Status,
     /// Short note about the system interface the real implementation will use.
     backend: []const u8,
+    /// Embedded PNG, tinted with the theme's detail colour at runtime.
+    icon: []const u8,
 };
 
 pub const all = [_]Tool{
@@ -28,6 +30,7 @@ pub const all = [_]Tool{
         .description = "Search and open .desktop applications.",
         .status = .available,
         .backend = ".desktop entries, with the shared wl_shm renderer.",
+        .icon = @embedFile("icons/rocket.png"),
     },
     .{
         .id = "audio",
@@ -35,6 +38,7 @@ pub const all = [_]Tool{
         .description = "Output volume, input level and default devices.",
         .status = .available,
         .backend = "PulseAudio native protocol over the user socket.",
+        .icon = @embedFile("icons/volume-high.png"),
     },
     .{
         .id = "bluetooth",
@@ -42,6 +46,7 @@ pub const all = [_]Tool{
         .description = "Adapters, pairing and connected devices.",
         .status = .coming_soon,
         .backend = "BlueZ over the system D-Bus, plus rfkill/sysfs state.",
+        .icon = @embedFile("icons/bluetooth.png"),
     },
     .{
         .id = "wifi",
@@ -49,6 +54,7 @@ pub const all = [_]Tool{
         .description = "Scan, connect and inspect wireless networks.",
         .status = .coming_soon,
         .backend = "nl80211 generic netlink, with a wpa_supplicant control socket.",
+        .icon = @embedFile("icons/wifi.png"),
     },
     .{
         .id = "power",
@@ -56,6 +62,7 @@ pub const all = [_]Tool{
         .description = "Battery, power profiles, suspend and session actions.",
         .status = .coming_soon,
         .backend = "sysfs power_supply/platform_profile and logind over D-Bus.",
+        .icon = @embedFile("icons/power-off.png"),
     },
 };
 

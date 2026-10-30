@@ -179,6 +179,14 @@ These are ideas, not commitments. The first milestone is to finish the control
 panel structure and the four requested tool views. Audio is the first real
 backend and is in progress; Bluetooth, Wi-Fi and power still need theirs.
 
+## Credits
+
+The control-panel icons come from **Font Awesome Free 6.7.2** by Fonticons,
+Inc. They are embedded in the binary as 128×128 PNGs and tinted with the active
+theme. The icons are licensed under CC BY 4.0; see
+[`src/icons/LICENSE-font-awesome.txt`](src/icons/LICENSE-font-awesome.txt) for
+source paths and attribution.
+
 ## Requirements
 
 iube requires a Wayland compositor that advertises `zwlr_layer_shell_v1`. That

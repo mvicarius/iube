@@ -10,14 +10,32 @@ const std = @import("std");
 const wayland = @import("wayland.zig");
 const render = @import("render.zig");
 const font = @import("font.zig");
+const png = @import("png.zig");
 const ui = @import("ui.zig");
 const session = @import("session.zig");
 const tools = @import("tools.zig");
 const spawn = @import("spawn.zig");
 
+const IconSlot = struct {
+    tried: bool = false,
+    image: ?png.Image = null,
+};
+
 pub const Panel = struct {
+    gpa: std.mem.Allocator,
     selected: usize = 0,
     hover: ?usize = null,
+    icons: [tools.all.len]IconSlot = @splat(.{}),
+
+    pub fn init(gpa: std.mem.Allocator) Panel {
+        return .{ .gpa = gpa };
+    }
+
+    pub fn deinit(self: *Panel) void {
+        for (&self.icons) |*slot| {
+            if (slot.image) |*image| image.deinit(self.gpa);
+        }
+    }
 
     pub fn windowSize(_: *Panel, metrics: ui.Metrics) ui.WindowSize {
         return metrics.listWindowSize(tools.all.len);
@@ -171,15 +189,22 @@ pub const Panel = struct {
                 cfg.highlight_low,
             );
 
-            const initial = appInitial(tool.name);
-            const initial_width = font.textWidth(initial, font_scale);
-            _ = canvas.text(
-                icon_x + @divTrunc(icon_px - initial_width, 2),
-                icon_y + @divTrunc(icon_px - text_height, 2),
-                initial,
-                cfg.detail,
-                font_scale,
-            );
+            if (self.getIcon(index)) |image| {
+                const inner_px = @max(1, icon_px - ui.px(m.small_margin, output_scale));
+                const image_x = icon_x + @divTrunc(icon_px - inner_px, 2);
+                const image_y = icon_y + @divTrunc(icon_px - inner_px, 2);
+                canvas.imageTinted(image_x, image_y, inner_px, inner_px, image, cfg.detail);
+            } else {
+                const initial = appInitial(tool.name);
+                const initial_width = font.textWidth(initial, font_scale);
+                _ = canvas.text(
+                    icon_x + @divTrunc(icon_px - initial_width, 2),
+                    icon_y + @divTrunc(icon_px - text_height, 2),
+                    initial,
+                    cfg.detail,
+                    font_scale,
+                );
+            }
 
             const row_y_px = ui.px(row_y, output_scale);
             const row_height_px = ui.px(m.row_height, output_scale);
@@ -215,6 +240,22 @@ pub const Panel = struct {
                 _ = canvas.text(status_x, name_y, status_text, cfg.detail, font_scale);
             }
         }
+    }
+
+    fn getIcon(self: *Panel, index: usize) ?*png.Image {
+        const slot = &self.icons[index];
+        if (!slot.tried) {
+            slot.tried = true;
+            slot.image = png.decode(self.gpa, tools.all[index].icon) catch |err| blk: {
+                std.log.warn(
+                    "failed to decode icon for '{s}': {s}",
+                    .{ tools.all[index].name, @errorName(err) },
+                );
+                break :blk null;
+            };
+        }
+        if (slot.image) |*image| return image;
+        return null;
     }
 };
 
