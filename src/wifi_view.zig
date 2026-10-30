@@ -503,10 +503,16 @@ pub const Wifi = struct {
                 font_scale,
                 name_width,
             );
+            const security = if (network.secured) "Secured" else "Open";
+            var secondary_buffer: [48]u8 = undefined;
+            const secondary_text = if (network.bandLabel()) |band|
+                std.fmt.bufPrint(&secondary_buffer, "{s} - {s}", .{ security, band }) catch security
+            else
+                security;
             _ = canvas.textFit(
                 name_x,
                 secondary_y,
-                if (network.secured) "Secured" else "Open",
+                secondary_text,
                 cfg.detail_2,
                 secondary_scale,
                 name_width,

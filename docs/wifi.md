@@ -55,10 +55,12 @@ after a D-Bus timeout instead of leaving the connection in a partial-message
 state. Initial startup performs one synchronous load before the window is shown.
 
 The header shows the wireless interface and one of `On`, `Off`, `Connected` or
-`Scanning...`. Rows show the SSID, security state and one status label:
-`Connected`, `Saved`, `Secured` or `Open`. The right side shows a signal icon, a
-gradient bar and a fixed-width percentage. The window uses the same 640×360
-default size as the launcher and scrolls when the network list grows.
+`Scanning...`. Rows show the SSID, security state, band and one status label:
+`Connected`, `Saved`, `Secured` or `Open`. The secondary line shows the band of
+the access point represented by the row (`2.4 GHz`, `5 GHz` or `6 GHz`). The
+right side shows a signal icon, a gradient bar and a fixed-width percentage.
+The window uses the same 640×360 default size as the launcher and scrolls when
+the network list grows.
 
 ## Current limitations
 

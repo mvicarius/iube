@@ -35,6 +35,13 @@ pub const Network = struct {
     pub fn label(self: Network) []const u8 {
         return if (self.ssid.len > 0) self.ssid else "(hidden)";
     }
+
+    pub fn bandLabel(self: Network) ?[]const u8 {
+        if (self.frequency >= 5925) return "6 GHz";
+        if (self.frequency >= 4900) return "5 GHz";
+        if (self.frequency >= 2400 and self.frequency < 2500) return "2.4 GHz";
+        return null;
+    }
 };
 
 pub const Saved = struct {
@@ -468,4 +475,24 @@ test "network label falls back to hidden" {
         .connected = false,
     };
     try std.testing.expectEqualStrings("(hidden)", hidden.label());
+}
+
+test "network band labels" {
+    const sample = Network{
+        .ap_path = "/ap",
+        .ssid = "Test",
+        .strength = 0,
+        .frequency = 2437,
+        .secured = false,
+        .connected = false,
+    };
+
+    var network = sample;
+    try std.testing.expectEqualStrings("2.4 GHz", network.bandLabel().?);
+    network.frequency = 5540;
+    try std.testing.expectEqualStrings("5 GHz", network.bandLabel().?);
+    network.frequency = 6115;
+    try std.testing.expectEqualStrings("6 GHz", network.bandLabel().?);
+    network.frequency = 0;
+    try std.testing.expect(network.bandLabel() == null);
 }
