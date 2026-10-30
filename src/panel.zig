@@ -205,7 +205,10 @@ pub const Panel = struct {
 
             const row_y_px = ui.px(row_y, output_scale);
             const row_height_px = ui.px(m.row_height, output_scale);
-            const name_x = ui.px(geometry.x + m.small_margin + m.icon_size + m.small_margin, output_scale);
+            const name_x = ui.px(
+                geometry.x + m.small_margin + m.icon_size + m.small_margin * 2,
+                output_scale,
+            );
             const name_y = row_y_px + @divTrunc(row_height_px - text_height, 2);
             const name_width = @max(
                 0,
