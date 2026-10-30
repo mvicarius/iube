@@ -504,10 +504,6 @@ fn wifiConnect(init: std.process.Init, ssid: []const u8) !void {
             break;
         }
     }
-    if (std.mem.eql(u8, ap_path, "/") and state.networks.len == 0) {
-        return error.NetworkNotFound;
-    }
-
     const network = wifi.Network{
         .ap_path = ap_path,
         .ssid = ssid,
