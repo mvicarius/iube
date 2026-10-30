@@ -102,14 +102,14 @@ Neighbour	secured	30%	5 GHz
 | `iube power poweroff` | Shut down through logind. |
 | `iube power lock` | Lock the current session. |
 | `iube power profile next` | Cycle the platform power profile. |
-| `iube power profile set <low-power\|balanced\|performance>` | Select a profile. |
+| `iube power profile set <low-power\|power-saver\|balanced\|performance>` | Select a profile. |
 | `iube power battery` | Print battery percentage, status and AC state. |
 
-`profile set` accepts only a profile that the current backend advertises. ACPI
+`profile set` accepts the profile names advertised by the active backend. ACPI
 platform profiles commonly use `low-power balanced performance`, while
-power-profiles-daemon may advertise `power-saver balanced performance`; the
-command reports the requested profile as unavailable rather than silently
-mapping it.
+power-profiles-daemon uses `power-saver balanced performance`. `low-power` and
+`power-saver` are treated as aliases, and the command prints the name actually
+advertised by the backend. An unknown name exits nonzero.
 
 `battery` reads sysfs directly and does not require D-Bus. It prints one line:
 
@@ -167,8 +167,8 @@ handlers such as `on-click`, not in a polling command.
   device removal are not part of this command grammar.
 - Wi-Fi actions require NetworkManager. Connecting to a network without a saved
   profile, entering passphrases, and creating a profile are not supported.
-- Power profiles are limited to the three names in the grammar and must exist
-  in the active backend.
+- Power profiles are limited to low-power/power-saver, balanced and performance
+  and must exist in the active backend.
 - `power battery` reports the first system battery, matching the power view.
 - Output is plain text for humans and simple scripts. There is no JSON or
   Waybar-specific formatting mode yet.

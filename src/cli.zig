@@ -39,12 +39,14 @@ pub const OnOff = enum {
 
 pub const Profile = enum {
     low_power,
+    power_saver,
     balanced,
     performance,
 
     fn name(self: Profile) []const u8 {
         return switch (self) {
             .low_power => "low-power",
+            .power_saver => "power-saver",
             .balanced => "balanced",
             .performance => "performance",
         };
@@ -52,11 +54,31 @@ pub const Profile = enum {
 
     fn parse(text: []const u8) ?Profile {
         if (std.mem.eql(u8, text, "low-power")) return .low_power;
+        if (std.mem.eql(u8, text, "power-saver")) return .power_saver;
         if (std.mem.eql(u8, text, "balanced")) return .balanced;
         if (std.mem.eql(u8, text, "performance")) return .performance;
         return null;
     }
 };
+
+/// ACPI uses `low-power`, power-profiles-daemon uses `power-saver`. Accept
+/// either spelling and report the name actually advertised by the backend.
+fn resolveProfileName(choices: []const []const u8, requested: Profile) ?[]const u8 {
+    const primary = requested.name();
+    for (choices) |choice| {
+        if (std.mem.eql(u8, choice, primary)) return choice;
+    }
+    if (requested == .low_power) {
+        for (choices) |choice| {
+            if (std.mem.eql(u8, choice, "power-saver")) return choice;
+        }
+    } else if (requested == .power_saver) {
+        for (choices) |choice| {
+            if (std.mem.eql(u8, choice, "low-power")) return choice;
+        }
+    }
+    return null;
+}
 
 pub const Action = union(enum) {
     audio_volume_up: u8,
@@ -545,15 +567,7 @@ fn powerProfileSet(init: std.process.Init, requested: Profile) !void {
     defer state.deinit();
 
     const profile = state.profile orelse return error.ProfileUnavailable;
-    const name = requested.name();
-    var available = false;
-    for (profile.choices) |choice| {
-        if (std.mem.eql(u8, choice, name)) {
-            available = true;
-            break;
-        }
-    }
-    if (!available) return error.ProfileNotAvailable;
+    const name = resolveProfileName(profile.choices, requested) orelse return error.ProfileNotAvailable;
 
     try client.setProfile(profile, name);
     printOut(init.io, "Power profile: {s}\n", .{name});
@@ -767,6 +781,9 @@ test "parse power actions" {
     var set = [_][]const u8{ "profile", "set", "performance" };
     try std.testing.expectEqual(Profile.performance, (try parse("power", &set)).power_profile_set);
 
+    var power_saver = [_][]const u8{ "profile", "set", "power-saver" };
+    try std.testing.expectEqual(Profile.power_saver, (try parse("power", &power_saver)).power_profile_set);
+
     var bad_set = [_][]const u8{ "profile", "set", "turbo" };
     try std.testing.expectError(error.InvalidArgument, parse("power", &bad_set));
 
@@ -817,6 +834,19 @@ test "bluetooth device lookup matches name or address case-insensitively" {
     try std.testing.expectEqual(@as(?usize, 0), findBluetoothDevice(&devices, "aa:bb:cc:dd:ee:ff"));
     try std.testing.expectEqual(@as(?usize, 1), findBluetoothDevice(&devices, "11:22:33:44:55:66"));
     try std.testing.expect(findBluetoothDevice(&devices, "mouse") == null);
+}
+
+test "power profile names resolve across ACPI and PPD" {
+    const acpi = [_][]const u8{ "low-power", "balanced", "performance" };
+    const ppd = [_][]const u8{ "power-saver", "balanced", "performance" };
+
+    try std.testing.expectEqualStrings("low-power", resolveProfileName(&acpi, .low_power).?);
+    try std.testing.expectEqualStrings("power-saver", resolveProfileName(&ppd, .power_saver).?);
+    try std.testing.expectEqualStrings("power-saver", resolveProfileName(&ppd, .low_power).?);
+    try std.testing.expectEqualStrings("low-power", resolveProfileName(&acpi, .power_saver).?);
+    try std.testing.expectEqualStrings("balanced", resolveProfileName(&ppd, .balanced).?);
+    try std.testing.expect(resolveProfileName(&ppd, .performance) != null);
+    try std.testing.expect(resolveProfileName(&[_][]const u8{"balanced"}, .performance) == null);
 }
 
 test "tool detection" {
