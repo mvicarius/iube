@@ -14,16 +14,18 @@ const config = @import("config.zig");
 const ui = @import("ui.zig");
 const session = @import("session.zig");
 const bluetooth = @import("bluetooth.zig");
+const worker_mod = @import("bluetooth_worker.zig");
 
 const base_header_height = 36;
 const base_footer_height = 24;
 const discovery_refresh_ms = 2000;
+const idle_refresh_ms = 5000;
 
 pub const Bluetooth = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
 
-    client: ?bluetooth.Client = null,
+    worker: ?*worker_mod.Worker = null,
     state: ?bluetooth.State = null,
     signal_icon: ?png.Image = null,
     battery_icon: ?png.Image = null,
@@ -31,14 +33,13 @@ pub const Bluetooth = struct {
     selected: usize = 0,
     hover: ?usize = null,
     scroll: i32 = 0,
-    last_discovery_refresh_ms: i64 = 0,
+    last_refresh_request_ms: i64 = 0,
+    refresh_pending: bool = false,
 
-    action_thread: ?std.Thread = null,
-    action_done: std.atomic.Value(bool) = .init(false),
-    action_success: std.atomic.Value(bool) = .init(false),
-    action_connect: bool = false,
-    action_path: [256]u8 = undefined,
-    action_path_len: usize = 0,
+    pending_action: ?worker_mod.Kind = null,
+    pending_path: [256]u8 = undefined,
+    pending_path_len: usize = 0,
+    pending_connect: bool = false,
 
     error_buffer: [256]u8 = undefined,
     error_len: usize = 0,
@@ -56,13 +57,11 @@ pub const Bluetooth = struct {
     }
 
     pub fn deinit(self: *Bluetooth) void {
-        if (self.action_thread) |thread| thread.join();
-        self.action_thread = null;
-        if (self.client) |*client| client.deinit();
+        if (self.worker) |worker| worker.stop();
+        self.worker = null;
         if (self.state) |*state| state.deinit();
         if (self.signal_icon) |*icon| icon.deinit(self.gpa);
         if (self.battery_icon) |*icon| icon.deinit(self.gpa);
-        self.client = null;
         self.state = null;
         self.signal_icon = null;
         self.battery_icon = null;
@@ -77,20 +76,11 @@ pub const Bluetooth = struct {
     }
 
     pub fn tick(self: *Bluetooth, s: *session.Session) void {
-        if (self.action_thread) |thread| {
-            if (self.action_done.load(.acquire)) {
-                const success = self.action_success.load(.acquire);
-                thread.join();
-                self.action_thread = null;
-                self.action_path_len = 0;
-                if (self.refreshState()) self.ensureSelectionVisible(s);
-                if (success) {
-                    self.error_len = 0;
-                    self.error_deadline_ms = 0;
-                } else {
-                    self.setNotice("Connection failed");
-                }
-                s.dirty = true;
+        if (self.worker) |worker| {
+            while (worker.poll()) |result_value| {
+                var result = result_value;
+                self.applyResult(&result, s);
+                result.deinit();
             }
         }
 
@@ -100,27 +90,67 @@ pub const Bluetooth = struct {
             s.dirty = true;
         }
 
-        const current_adapter = self.adapter() orelse {
-            self.last_discovery_refresh_ms = 0;
-            return;
-        };
-        if (!current_adapter.powered or !current_adapter.discovering) {
-            self.last_discovery_refresh_ms = 0;
-            return;
-        }
+        if (self.worker == null or self.pending_action != null or self.refresh_pending) return;
 
         const now = s.nowMs();
-        if (self.last_discovery_refresh_ms == 0) {
-            self.last_discovery_refresh_ms = now;
-            return;
-        }
-        if (now - self.last_discovery_refresh_ms < discovery_refresh_ms) return;
+        const interval: i64 = if (self.adapter()) |current_adapter|
+            (if (current_adapter.powered and current_adapter.discovering)
+                discovery_refresh_ms
+            else
+                idle_refresh_ms)
+        else
+            idle_refresh_ms;
 
-        self.last_discovery_refresh_ms = now;
-        if (self.refreshState()) {
+        if (self.last_refresh_request_ms != 0 and now - self.last_refresh_request_ms < interval) return;
+        self.requestRefresh(s);
+    }
+
+    fn applyResult(self: *Bluetooth, result: *worker_mod.Result, s: *session.Session) void {
+        if (result.state) |state| {
+            var path_buffer: [256]u8 = undefined;
+            const previous_path = self.copySelectedPath(&path_buffer);
+            if (self.state) |*old| old.deinit();
+            self.state = state;
+            result.state = null;
+            self.selectByPath(previous_path);
             self.ensureSelectionVisible(s);
-            s.dirty = true;
+            self.last_refresh_request_ms = s.nowMs();
         }
+
+        switch (result.kind) {
+            .refresh => {
+                self.refresh_pending = false;
+                if (!result.success) {
+                    self.setError(
+                        "Bluetooth refresh failed",
+                        result.error_value orelse error.Protocol,
+                    );
+                }
+            },
+            .power, .discovery, .connect => {
+                if (self.pending_action == result.kind) {
+                    self.pending_action = null;
+                    self.pending_path_len = 0;
+                    self.pending_connect = false;
+                }
+
+                if (!result.success) {
+                    const prefix = switch (result.kind) {
+                        .power => "Power change failed",
+                        .discovery => "Discovery change failed",
+                        .connect => "Connection failed",
+                        else => unreachable,
+                    };
+                    self.setError(prefix, result.error_value orelse error.Protocol);
+                } else if (result.error_value != null) {
+                    self.setNotice("Action succeeded, but refresh failed");
+                } else {
+                    self.error_len = 0;
+                    self.error_deadline_ms = 0;
+                }
+            },
+        }
+        s.dirty = true;
     }
 
     pub fn overTextField(_: *Bluetooth, _: *session.Session) bool {
@@ -159,7 +189,12 @@ pub const Bluetooth = struct {
 
         if (key.keysym == 'r' or key.keysym == 'R') {
             if (!is_repeat) {
-                self.refreshOrReconnect(s);
+                if (self.worker != null) {
+                    self.requestRefresh(s);
+                } else {
+                    self.reload();
+                    self.ensureSelectionVisible(s);
+                }
                 s.dirty = true;
             }
         }
@@ -230,14 +265,18 @@ pub const Bluetooth = struct {
     fn reload(self: *Bluetooth) void {
         self.error_len = 0;
         self.error_deadline_ms = 0;
+        self.pending_action = null;
+        self.pending_path_len = 0;
+        self.pending_connect = false;
+        self.refresh_pending = false;
 
         var path_buffer: [256]u8 = undefined;
         const previous_path = self.copySelectedPath(&path_buffer);
 
+        if (self.worker) |worker| worker.stop();
+        self.worker = null;
         if (self.state) |*state| state.deinit();
-        if (self.client) |*client| client.deinit();
         self.state = null;
-        self.client = null;
 
         var client = bluetooth.Client.connect(self.io, self.gpa) catch |err| {
             self.setFatalError("Bluetooth unavailable", err);
@@ -251,34 +290,30 @@ pub const Bluetooth = struct {
             return;
         };
 
-        self.client = client;
         self.state = state;
-        self.selectByPath(previous_path);
-        self.last_discovery_refresh_ms = 0;
-    }
-
-    fn refreshOrReconnect(self: *Bluetooth, s: *session.Session) void {
-        if (self.client != null and self.refreshState()) {
-            self.ensureSelectionVisible(s);
+        self.worker = worker_mod.Worker.start(self.io, client) catch |err| {
+            // Worker.start owns and closes the client on failure.
+            if (self.state) |*owned| owned.deinit();
+            self.state = null;
+            self.setFatalError("Bluetooth worker unavailable", err);
+            self.clampSelection();
             return;
-        }
-        self.reload();
-        self.ensureSelectionVisible(s);
+        };
+        self.last_refresh_request_ms = self.nowMs();
+        self.selectByPath(previous_path);
     }
 
-    fn refreshState(self: *Bluetooth) bool {
-        const client = if (self.client) |*value| value else return false;
-        var path_buffer: [256]u8 = undefined;
-        const previous_path = self.copySelectedPath(&path_buffer);
-        const state = client.refresh(self.gpa) catch |err| {
-            self.setError("Bluetooth refresh failed", err);
-            return false;
-        };
+    fn requestRefresh(self: *Bluetooth, s: *session.Session) void {
+        if (self.worker == null or self.refresh_pending) return;
 
-        if (self.state) |*old| old.deinit();
-        self.state = state;
-        self.selectByPath(previous_path);
-        return true;
+        self.worker.?.submit(.{ .kind = .refresh }) catch |err| {
+            self.setError("Bluetooth refresh failed", err);
+            s.dirty = true;
+            return;
+        };
+        self.refresh_pending = true;
+        self.last_refresh_request_ms = s.nowMs();
+        s.dirty = true;
     }
 
     fn copySelectedPath(self: *Bluetooth, buffer: *[256]u8) ?[]const u8 {
@@ -377,37 +412,15 @@ pub const Bluetooth = struct {
     }
 
     fn togglePower(self: *Bluetooth, s: *session.Session) void {
-        if (self.action_thread != null) {
-            self.setNotice("Action already in progress");
-            s.dirty = true;
-            return;
-        }
         const active_adapter = self.adapter() orelse {
             self.setNotice("No Bluetooth adapter");
             s.dirty = true;
             return;
         };
-        const client = if (self.client) |*value| value else return;
-        self.error_len = 0;
-
-        client.setAdapterPowered(active_adapter, !active_adapter.powered) catch |err| {
-            _ = self.refreshState();
-            self.ensureSelectionVisible(s);
-            self.setError("Power change failed", err);
-            s.dirty = true;
-            return;
-        };
-        _ = self.refreshState();
-        self.ensureSelectionVisible(s);
-        s.dirty = true;
+        _ = self.submitAction(.power, active_adapter.path, !active_adapter.powered, s);
     }
 
     fn toggleDiscovery(self: *Bluetooth, s: *session.Session) void {
-        if (self.action_thread != null) {
-            self.setNotice("Action already in progress");
-            s.dirty = true;
-            return;
-        }
         const active_adapter = self.adapter() orelse {
             self.setNotice("No Bluetooth adapter");
             s.dirty = true;
@@ -418,83 +431,64 @@ pub const Bluetooth = struct {
             s.dirty = true;
             return;
         }
-
-        const client = if (self.client) |*value| value else return;
-        const desired = !active_adapter.discovering;
-        self.error_len = 0;
-
-        client.setDiscovering(active_adapter, desired) catch |err| {
-            _ = self.refreshState();
-            self.ensureSelectionVisible(s);
-            if (self.adapter()) |current| {
-                if (current.discovering == desired) {
-                    self.error_len = 0;
-                    s.dirty = true;
-                    return;
-                }
-            }
-            self.setError("Discovery change failed", err);
-            s.dirty = true;
-            return;
-        };
-        _ = self.refreshState();
-        self.ensureSelectionVisible(s);
-        s.dirty = true;
+        _ = self.submitAction(.discovery, active_adapter.path, !active_adapter.discovering, s);
     }
 
     fn toggleConnection(self: *Bluetooth, s: *session.Session) void {
-        if (self.action_thread != null) {
-            self.setNotice("Action already in progress");
-            s.dirty = true;
-            return;
-        }
         const device = self.currentDevice() orelse return;
-        if (device.path.len > self.action_path.len) {
-            self.setNotice("Device path too long");
-            s.dirty = true;
-            return;
-        }
-
-        @memcpy(self.action_path[0..device.path.len], device.path);
-        self.action_path_len = device.path.len;
-        self.action_connect = !device.connected;
-        self.action_done.store(false, .release);
-        self.action_success.store(false, .release);
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
-
-        self.action_thread = std.Thread.spawn(.{}, connectionWorker, .{self}) catch |err| {
-            self.setError("Could not start connection", err);
-            s.dirty = true;
-            return;
-        };
-        s.dirty = true;
+        _ = self.submitAction(.connect, device.path, !device.connected, s);
     }
 
-    fn connectionWorker(self: *Bluetooth) void {
-        var success = false;
-        defer {
-            self.action_success.store(success, .release);
-            self.action_done.store(true, .release);
+    fn submitAction(
+        self: *Bluetooth,
+        kind: worker_mod.Kind,
+        path: []const u8,
+        value: bool,
+        s: *session.Session,
+    ) bool {
+        if (self.worker == null) {
+            self.setNotice("Bluetooth unavailable");
+            s.dirty = true;
+            return false;
+        }
+        if (self.pending_action != null) {
+            self.setNotice("Action already in progress");
+            s.dirty = true;
+            return false;
+        }
+        if (path.len > self.pending_path.len) {
+            self.setNotice("Device path too long");
+            s.dirty = true;
+            return false;
         }
 
-        var client = bluetooth.Client.connect(self.io, self.gpa) catch return;
-        defer client.deinit();
-
-        const device = bluetooth.Device{
-            .path = self.action_path[0..self.action_path_len],
-            .adapter_path = "",
-            .name = "",
-            .address = "",
+        var job = worker_mod.Job{
+            .kind = kind,
+            .path_len = path.len,
+            .value = value,
         };
-        client.setConnected(device, self.action_connect) catch return;
-        success = true;
+        @memcpy(job.path[0..path.len], path);
+
+        self.worker.?.submit(job) catch |err| {
+            self.setError("Bluetooth action failed", err);
+            s.dirty = true;
+            return false;
+        };
+
+        self.pending_action = kind;
+        self.pending_path_len = path.len;
+        self.pending_connect = kind == .connect and value;
+        @memcpy(self.pending_path[0..path.len], path);
+        self.error_len = 0;
+        self.error_deadline_ms = 0;
+        s.dirty = true;
+        return true;
     }
 
     fn actionPendingFor(self: *Bluetooth, device: bluetooth.Device) bool {
-        if (self.action_thread == null or self.action_done.load(.acquire)) return false;
-        if (self.action_path_len != device.path.len) return false;
-        return std.mem.eql(u8, self.action_path[0..self.action_path_len], device.path);
+        if (self.pending_action != .connect) return false;
+        if (self.pending_path_len != device.path.len) return false;
+        return std.mem.eql(u8, self.pending_path[0..self.pending_path_len], device.path);
     }
 
     fn listGeometry(_: *Bluetooth, s: *session.Session) ListGeometry {
@@ -716,7 +710,7 @@ pub const Bluetooth = struct {
 
             const pending = self.actionPendingFor(device);
             const status_text = if (pending)
-                (if (self.action_connect) "Connecting..." else "Disconnecting...")
+                (if (self.pending_connect) "Connecting..." else "Disconnecting...")
             else
                 device.stateLabel();
             const status_color = if (pending)

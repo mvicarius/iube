@@ -33,6 +33,7 @@ src/
   audio_view.zig   audio controller: outputs, inputs, volume, mute, default
   audio.zig        PulseAudio native-protocol client (no libpulse)
   bluetooth_view.zig  Bluetooth controller: adapter and device list
+  bluetooth_worker.zig  long-lived Bluetooth job worker
   bluetooth.zig    BlueZ object model over D-Bus (no BlueZ client library)
   dbus.zig         minimal system D-Bus client (no libdbus)
 
