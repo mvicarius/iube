@@ -30,6 +30,7 @@ pub const Bluetooth = struct {
 
     error_buffer: [256]u8 = undefined,
     error_len: usize = 0,
+    error_deadline_ms: i64 = 0,
 
     pub fn init(io: std.Io, gpa: std.mem.Allocator) Bluetooth {
         var view = Bluetooth{
@@ -66,6 +67,14 @@ pub const Bluetooth = struct {
 
     pub fn wantsBlink(_: *Bluetooth) bool {
         return false;
+    }
+
+    pub fn tick(self: *Bluetooth, s: *session.Session) void {
+        if (self.error_len == 0 or self.error_deadline_ms == 0) return;
+        if (s.nowMs() < self.error_deadline_ms) return;
+        self.error_len = 0;
+        self.error_deadline_ms = 0;
+        s.dirty = true;
     }
 
     pub fn overTextField(_: *Bluetooth, _: *session.Session) bool {
@@ -174,6 +183,7 @@ pub const Bluetooth = struct {
 
     fn reload(self: *Bluetooth) void {
         self.error_len = 0;
+        self.error_deadline_ms = 0;
 
         if (self.state) |*state| state.deinit();
         if (self.client) |*client| client.deinit();
@@ -181,13 +191,13 @@ pub const Bluetooth = struct {
         self.client = null;
 
         var client = bluetooth.Client.connect(self.io, self.gpa) catch |err| {
-            self.setError("Bluetooth unavailable", err);
+            self.setFatalError("Bluetooth unavailable", err);
             self.clampSelection();
             return;
         };
         const state = client.refresh(self.gpa) catch |err| {
             client.deinit();
-            self.setError("Bluetooth unavailable", err);
+            self.setFatalError("Bluetooth unavailable", err);
             self.clampSelection();
             return;
         };
@@ -215,6 +225,10 @@ pub const Bluetooth = struct {
         return true;
     }
 
+    fn nowMs(self: *const Bluetooth) i64 {
+        return std.Io.Clock.Timestamp.now(self.io, .awake).raw.toMilliseconds();
+    }
+
     fn setError(self: *Bluetooth, prefix: []const u8, err: anyerror) void {
         const text: []const u8 = std.fmt.bufPrint(
             &self.error_buffer,
@@ -222,12 +236,24 @@ pub const Bluetooth = struct {
             .{ prefix, @errorName(err) },
         ) catch "Bluetooth error";
         self.error_len = text.len;
+        self.error_deadline_ms = self.nowMs() + 5000;
+    }
+
+    fn setFatalError(self: *Bluetooth, prefix: []const u8, err: anyerror) void {
+        const text: []const u8 = std.fmt.bufPrint(
+            &self.error_buffer,
+            "{s}: {s}",
+            .{ prefix, @errorName(err) },
+        ) catch "Bluetooth error";
+        self.error_len = text.len;
+        self.error_deadline_ms = 0;
     }
 
     fn setNotice(self: *Bluetooth, text: []const u8) void {
         const length = @min(text.len, self.error_buffer.len);
         @memcpy(self.error_buffer[0..length], text[0..length]);
         self.error_len = length;
+        self.error_deadline_ms = self.nowMs() + 5000;
     }
 
     fn errorSlice(self: *const Bluetooth) []const u8 {
@@ -619,7 +645,7 @@ pub const Bluetooth = struct {
             ui.px(x, output_scale),
             ui.px(y, output_scale),
             "Bluetooth backend unavailable",
-            cfg.text,
+            cfg.warm_2,
             font_scale,
         );
 
@@ -633,7 +659,7 @@ pub const Bluetooth = struct {
             width,
             line_height,
             self.errorSlice(),
-            cfg.muted,
+            cfg.warm_2,
             body_scale,
         );
         _ = canvas.text(
@@ -662,13 +688,13 @@ pub const Bluetooth = struct {
         const text = if (self.error_len > 0)
             self.errorSlice()
         else
-            "Up/Down  Enter toggle  P power  D discover  R refresh  Esc";
+            "Up/Down  Enter toggle  P Power on/off  D discover  R refresh  Esc";
 
         _ = canvas.textFit(
             ui.px(m.margin, output_scale),
             y,
             text,
-            if (self.error_len > 0) cfg.accent else cfg.muted,
+            if (self.error_len > 0) cfg.warm_2 else cfg.muted,
             hint_scale,
             width,
         );
