@@ -111,6 +111,7 @@ corner_radius = 12
 base = #191724
 surface = #1f1d2e
 accent = #9ccfd8
+detail = #c4a7e7
 text = #e0def4
 muted = #6e6a86
 highlight_low = #21202e
@@ -127,9 +128,10 @@ The colour roles are:
 | --- | --- |
 | `base` | window background |
 | `surface` | search field and unselected rows |
-| `accent` | search-field focus ring, text cursor, "Open" badges |
+| `accent` | search-field focus ring, text cursor, volume bars |
+| `detail` | secondary device names, fallback icon initials, status details |
 | `text` | application/tool names and typed query |
-| `muted` | placeholder text, "No matches", fallback icon initials |
+| `muted` | placeholder text, "No matches", footer hints |
 | `highlight_low` | hovered row, fallback icon and badge background |
 | `highlight_mid` | window border |
 | `highlight_high` | selected row |

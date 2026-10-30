@@ -177,39 +177,18 @@ pub const Panel = struct {
                 icon_x + @divTrunc(icon_px - initial_width, 2),
                 icon_y + @divTrunc(icon_px - text_height, 2),
                 initial,
-                cfg.muted,
+                cfg.detail,
                 font_scale,
             );
 
             const row_y_px = ui.px(row_y, output_scale);
             const row_height_px = ui.px(m.row_height, output_scale);
-            const small_margin_px = ui.px(m.small_margin, output_scale);
-            const badge_text = if (tool.status == .available) "Open" else "Coming soon";
-            const badge_color = if (tool.status == .available) cfg.accent else cfg.muted;
-            const badge_width = font.textWidth(badge_text, font_scale) + small_margin_px * 2;
-            const badge_height = text_height + small_margin_px;
-            const badge_x = ui.px(geometry.x + geometry.w - m.small_margin, output_scale) - badge_width;
-            const badge_y = row_y_px + @divTrunc(row_height_px - badge_height, 2);
-
-            canvas.roundRect(
-                badge_x,
-                badge_y,
-                badge_width,
-                badge_height,
-                ui.px(m.icon_radius, output_scale),
-                cfg.highlight_low,
-            );
-            _ = canvas.text(
-                badge_x + small_margin_px,
-                badge_y + @divTrunc(badge_height - text_height, 2),
-                badge_text,
-                badge_color,
-                font_scale,
-            );
-
             const name_x = ui.px(geometry.x + m.small_margin + m.icon_size + m.small_margin, output_scale);
             const name_y = row_y_px + @divTrunc(row_height_px - text_height, 2);
-            const name_width = @max(0, badge_x - small_margin_px - name_x);
+            const name_width = @max(
+                0,
+                ui.px(geometry.x + geometry.w - m.small_margin, output_scale) - name_x,
+            );
             _ = canvas.textFit(
                 name_x,
                 name_y,

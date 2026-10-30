@@ -399,7 +399,7 @@ pub const Launcher = struct {
                         icon_x + @divTrunc(icon_px - initial_width, 2),
                         icon_y + @divTrunc(icon_px - text_height, 2),
                         initial,
-                        cfg.muted,
+                        cfg.detail,
                         font_scale,
                     );
                 }

@@ -574,7 +574,7 @@ pub const Audio = struct {
                 icon_x + @divTrunc(icon_px - initial_width, 2),
                 icon_y + @divTrunc(icon_px - text_height, 2),
                 initial,
-                cfg.muted,
+                cfg.detail,
                 font_scale,
             );
 
@@ -594,7 +594,7 @@ pub const Audio = struct {
                     dot_size,
                     dot_size,
                     @divTrunc(dot_size, 2),
-                    cfg.accent,
+                    cfg.detail,
                 );
                 label_x += dot_size + @divTrunc(margin_px, 2);
             }
@@ -667,7 +667,7 @@ pub const Audio = struct {
                 label_x,
                 secondary_y,
                 device.name,
-                cfg.muted,
+                cfg.detail,
                 secondary_scale,
                 text_width,
             );

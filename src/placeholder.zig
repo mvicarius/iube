@@ -65,7 +65,7 @@ pub const Placeholder = struct {
             icon_x + @divTrunc(icon_px - initial_width, 2),
             icon_y + @divTrunc(icon_px - text_height, 2),
             initial,
-            cfg.muted,
+            cfg.detail,
             font_scale,
         );
 
@@ -97,7 +97,7 @@ pub const Placeholder = struct {
             badge_x + small_margin_px,
             badge_y + @divTrunc(badge_height - text_height, 2),
             badge_text,
-            cfg.accent,
+            cfg.detail,
             font_scale,
         );
 

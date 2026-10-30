@@ -15,6 +15,7 @@ const rosepine = struct {
     const base = Color{ .r = 0x19, .g = 0x17, .b = 0x24 };
     const surface = Color{ .r = 0x1f, .g = 0x1d, .b = 0x2e };
     const accent = Color{ .r = 0x9c, .g = 0xcf, .b = 0xd8 };
+    const detail = Color{ .r = 0xc4, .g = 0xa7, .b = 0xe7 };
     const text = Color{ .r = 0xe0, .g = 0xde, .b = 0xf4 };
     const muted = Color{ .r = 0x6e, .g = 0x6a, .b = 0x86 };
     const highlight_low = Color{ .r = 0x21, .g = 0x20, .b = 0x2e };
@@ -33,6 +34,7 @@ pub const Config = struct {
     base: Color = rosepine.base,
     surface: Color = rosepine.surface,
     accent: Color = rosepine.accent,
+    detail: Color = rosepine.detail,
     text: Color = rosepine.text,
     muted: Color = rosepine.muted,
     highlight_low: Color = rosepine.highlight_low,
@@ -162,6 +164,7 @@ fn colorField(config: *Config, key: []const u8) ?*Color {
     if (keyEql(key, "base")) return &config.base;
     if (keyEql(key, "surface")) return &config.surface;
     if (keyEql(key, "accent")) return &config.accent;
+    if (keyEql(key, "detail")) return &config.detail;
     if (keyEql(key, "text")) return &config.text;
     if (keyEql(key, "muted")) return &config.muted;
     if (keyEql(key, "highlight_low")) return &config.highlight_low;
@@ -248,6 +251,7 @@ test "defaults are rose pine" {
     try std.testing.expectEqual(Color{ .r = 0x19, .g = 0x17, .b = 0x24 }, config.base);
     try std.testing.expectEqual(Color{ .r = 0x1f, .g = 0x1d, .b = 0x2e }, config.surface);
     try std.testing.expectEqual(Color{ .r = 0x9c, .g = 0xcf, .b = 0xd8 }, config.accent);
+    try std.testing.expectEqual(Color{ .r = 0xc4, .g = 0xa7, .b = 0xe7 }, config.detail);
     try std.testing.expectEqual(Color{ .r = 0xe0, .g = 0xde, .b = 0xf4 }, config.text);
     try std.testing.expectEqual(Color{ .r = 0x6e, .g = 0x6a, .b = 0x86 }, config.muted);
     try std.testing.expectEqual(Color{ .r = 0x21, .g = 0x20, .b = 0x2e }, config.highlight_low);
@@ -265,6 +269,7 @@ test "parse scale radius and colors" {
         \\base = #000000
         \\surface = #112233 # inline comment
         \\accent = #abc
+        \\detail = #aabbcc
         \\text = #ffffff
         \\muted = 0x808080
         \\highlight_low = #010203
@@ -277,6 +282,7 @@ test "parse scale radius and colors" {
     try std.testing.expectEqual(Color{ .r = 0, .g = 0, .b = 0 }, config.base);
     try std.testing.expectEqual(Color{ .r = 0x11, .g = 0x22, .b = 0x33 }, config.surface);
     try std.testing.expectEqual(Color{ .r = 0xaa, .g = 0xbb, .b = 0xcc }, config.accent);
+    try std.testing.expectEqual(Color{ .r = 0xaa, .g = 0xbb, .b = 0xcc }, config.detail);
     try std.testing.expectEqual(Color{ .r = 0xff, .g = 0xff, .b = 0xff }, config.text);
     try std.testing.expectEqual(Color{ .r = 0x80, .g = 0x80, .b = 0x80 }, config.muted);
     try std.testing.expectEqual(Color{ .r = 0x01, .g = 0x02, .b = 0x03 }, config.highlight_low);
