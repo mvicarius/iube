@@ -12,16 +12,24 @@ pub const Kind = enum {
     power,
     discovery,
     connect,
+    pair,
+    forget,
 };
 
 pub const Job = struct {
     kind: Kind,
     path: [256]u8 = undefined,
     path_len: usize = 0,
+    adapter_path: [256]u8 = undefined,
+    adapter_path_len: usize = 0,
     value: bool = false,
 
     pub fn pathSlice(self: *const Job) []const u8 {
         return self.path[0..self.path_len];
+    }
+
+    pub fn adapterPathSlice(self: *const Job) []const u8 {
+        return self.adapter_path[0..self.adapter_path_len];
     }
 };
 
@@ -176,6 +184,29 @@ pub const Worker = struct {
                     .address = "",
                 };
                 client.setConnected(device, job.value) catch |err| {
+                    result.error_value = err;
+                    self.resetClientIfBroken(err);
+                    return result;
+                };
+                result.success = true;
+                self.refreshResult(client, &result);
+            },
+            .pair => {
+                _ = bluetooth.pairDetached(self.io, self.gpa, job.pathSlice()) catch |err| {
+                    result.error_value = err;
+                    return result;
+                };
+                result.success = true;
+                self.refreshResult(client, &result);
+            },
+            .forget => {
+                const device = bluetooth.Device{
+                    .path = job.pathSlice(),
+                    .adapter_path = job.adapterPathSlice(),
+                    .name = "",
+                    .address = "",
+                };
+                client.removeDevice(device) catch |err| {
                     result.error_value = err;
                     self.resetClientIfBroken(err);
                     return result;

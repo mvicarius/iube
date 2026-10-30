@@ -1,16 +1,17 @@
 //! Minimal D-Bus client over the system bus socket.
 //!
-//! iube only needs method calls and their replies for BlueZ and, later, logind.
-//! This module implements that subset directly: EXTERNAL authentication, method
-//! calls with a small header-field writer, and a reader for reply bodies. No
-//! libdbus or libsystemd is linked.
+//! iube needs method calls and their replies for BlueZ, logind and the pairing
+//! agent. This module implements that subset directly: EXTERNAL authentication,
+//! method calls with a small header-field writer, a reader for incoming
+//! messages, and method-return/error replies. No libdbus or libsystemd is
+//! linked.
 
 const std = @import("std");
 
-const method_call = 1;
-const method_return = 2;
-const error_reply = 3;
-const signal_message = 4;
+pub const method_call = 1;
+pub const method_return = 2;
+pub const error_reply = 3;
+pub const signal_message = 4;
 
 const max_message_size = 8 * 1024 * 1024;
 const io_timeout_ms = 3000;
@@ -31,6 +32,34 @@ pub const Reply = struct {
 
     pub fn deinit(self: *Reply) void {
         self.gpa.free(self.body);
+    }
+};
+
+/// A complete message received from the bus. Header values point into
+/// `fields_alloc`, which is owned by this value.
+pub const Incoming = struct {
+    gpa: std.mem.Allocator,
+    fields_alloc: []u8,
+    fields_len: usize,
+    body: []u8,
+    message_type: u8,
+    serial: u32,
+    path: []const u8 = "",
+    interface: []const u8 = "",
+    member: []const u8 = "",
+    error_name: []const u8 = "",
+    sender: []const u8 = "",
+    signature: []const u8 = "",
+    reply_serial: ?u32 = null,
+
+    pub fn deinit(self: *Incoming) void {
+        self.gpa.free(self.fields_alloc);
+        self.gpa.free(self.body);
+        self.* = undefined;
+    }
+
+    pub fn isMethodCall(self: Incoming) bool {
+        return self.message_type == method_call;
     }
 };
 
@@ -60,6 +89,40 @@ pub const Client = struct {
     }
 
     pub fn call(self: *Client, message: Message) !Reply {
+        const serial = try self.sendCall(message);
+
+        while (true) {
+            var received = try self.readIncoming(message.timeout_ms);
+            if (received.reply_serial) |reply_serial| {
+                if (reply_serial != serial) {
+                    received.deinit();
+                    continue;
+                }
+            } else {
+                received.deinit();
+                continue;
+            }
+
+            switch (received.message_type) {
+                method_return => {
+                    self.gpa.free(received.fields_alloc);
+                    return .{ .gpa = self.gpa, .body = received.body };
+                },
+                error_reply => {
+                    received.deinit();
+                    return error.MethodFailed;
+                },
+                else => {
+                    received.deinit();
+                    return error.Protocol;
+                },
+            }
+        }
+    }
+
+    /// Send a method call and return its serial without waiting for a reply.
+    /// Use `readIncoming` to service replies and incoming method calls.
+    pub fn sendCall(self: *Client, message: Message) !u32 {
         var fields = Builder{};
         fields.putFieldObjectPath(1, message.path);
         fields.putFieldString(6, "s", message.destination);
@@ -69,15 +132,68 @@ pub const Client = struct {
             fields.putFieldSignature(8, message.signature);
         }
 
+        const serial = self.takeSerial();
+        try self.writeMessage(method_call, serial, &fields, message.body);
+        return serial;
+    }
+
+    /// Reply to an incoming method call with an empty body.
+    pub fn sendEmptyReply(self: *Client, request: Incoming) !void {
+        try self.sendMethodReturn(request.serial, request.sender, "", "");
+    }
+
+    pub fn sendMethodReturn(
+        self: *Client,
+        reply_serial: u32,
+        destination: []const u8,
+        signature: []const u8,
+        body: []const u8,
+    ) !void {
+        var fields = Builder{};
+        fields.putFieldU32(5, "u", reply_serial);
+        if (destination.len > 0) fields.putFieldString(6, "s", destination);
+        if (signature.len > 0) fields.putFieldSignature(8, signature);
+        try self.writeMessage(method_return, self.takeSerial(), &fields, body);
+    }
+
+    /// Reject an incoming method call with a D-Bus error and a human-readable
+    /// message.
+    pub fn sendError(
+        self: *Client,
+        request: Incoming,
+        error_name: []const u8,
+        text: []const u8,
+    ) !void {
+        var body = Builder{};
+        body.putString(text);
+
+        var fields = Builder{};
+        fields.putFieldU32(5, "u", request.serial);
+        if (request.sender.len > 0) fields.putFieldString(6, "s", request.sender);
+        fields.putFieldString(4, "s", error_name);
+        fields.putFieldSignature(8, "s");
+        try self.writeMessage(error_reply, self.takeSerial(), &fields, body.slice());
+    }
+
+    fn takeSerial(self: *Client) u32 {
         const serial = self.next_serial;
         self.next_serial +%= 1;
         if (self.next_serial == 0) self.next_serial = 1;
+        return serial;
+    }
 
+    fn writeMessage(
+        self: *Client,
+        message_type: u8,
+        serial: u32,
+        fields: *const Builder,
+        body: []const u8,
+    ) !void {
         var header: [16]u8 = @splat(0);
         header[0] = 'l';
-        header[1] = method_call;
+        header[1] = message_type;
         header[3] = 1;
-        std.mem.writeInt(u32, header[4..8], @intCast(message.body.len), .little);
+        std.mem.writeInt(u32, header[4..8], @intCast(body.len), .little);
         std.mem.writeInt(u32, header[8..12], serial, .little);
         std.mem.writeInt(u32, header[12..16], @intCast(fields.len), .little);
 
@@ -92,41 +208,12 @@ pub const Client = struct {
         try file.writeStreamingAll(self.io, &header);
         try file.writeStreamingAll(self.io, fields.slice());
         if (padding > 0) try file.writeStreamingAll(self.io, zero_padding[0..padding]);
-        try file.writeStreamingAll(self.io, message.body);
-
-        while (true) {
-            const received = try self.receive(message.timeout_ms);
-            if (received.reply_serial) |reply_serial| {
-                if (reply_serial != serial) {
-                    self.gpa.free(received.body);
-                    continue;
-                }
-            } else {
-                self.gpa.free(received.body);
-                continue;
-            }
-
-            switch (received.message_type) {
-                method_return => return .{ .gpa = self.gpa, .body = received.body },
-                error_reply => {
-                    self.gpa.free(received.body);
-                    return error.MethodFailed;
-                },
-                else => {
-                    self.gpa.free(received.body);
-                    return error.Protocol;
-                },
-            }
-        }
+        try file.writeStreamingAll(self.io, body);
     }
 
-    const Received = struct {
-        message_type: u8,
-        reply_serial: ?u32,
-        body: []u8,
-    };
-
-    fn receive(self: *Client, timeout_ms: i32) !Received {
+    /// Receive one message. The caller owns the returned value and must call
+    /// `deinit` on it.
+    pub fn readIncoming(self: *Client, timeout_ms: i32) !Incoming {
         var header: [16]u8 = undefined;
         try self.readExact(&header, timeout_ms);
         if (header[0] != 'l') return error.BigEndianUnsupported;
@@ -139,18 +226,31 @@ pub const Client = struct {
 
         const fields_padded = std.mem.alignForward(usize, fields_len, 8);
         const fields = try self.gpa.alloc(u8, fields_padded);
-        defer self.gpa.free(fields);
-        try self.readExact(fields, timeout_ms);
-
-        const body = try self.gpa.alloc(u8, body_len);
-        errdefer self.gpa.free(body);
-        try self.readExact(body, timeout_ms);
-
-        return .{
-            .message_type = header[1],
-            .reply_serial = findReplySerial(fields[0..fields_len]),
-            .body = body,
+        self.readExact(fields, timeout_ms) catch |err| {
+            self.gpa.free(fields);
+            return err;
         };
+
+        const body = self.gpa.alloc(u8, body_len) catch |err| {
+            self.gpa.free(fields);
+            return err;
+        };
+        self.readExact(body, timeout_ms) catch |err| {
+            self.gpa.free(fields);
+            self.gpa.free(body);
+            return err;
+        };
+
+        // parseIncoming owns both allocations and frees them on its own error
+        // paths.
+        return parseIncoming(
+            self.gpa,
+            fields,
+            fields_len,
+            body,
+            header[1],
+            std.mem.readInt(u32, header[8..12], .little),
+        );
     }
 
     fn authenticate(self: *Client) !void {
@@ -288,6 +388,10 @@ pub const Builder = struct {
         self.putU32(if (value) 1 else 0);
     }
 
+    pub fn putObjectPath(self: *Builder, value: []const u8) void {
+        self.putString(value);
+    }
+
     fn putFieldObjectPath(self: *Builder, code: u8, value: []const u8) void {
         self.putFieldString(code, "o", value);
     }
@@ -298,6 +402,13 @@ pub const Builder = struct {
         self.putSignature(signature);
         self.alignTo(4);
         self.putString(value);
+    }
+
+    fn putFieldU32(self: *Builder, code: u8, signature: []const u8, value: u32) void {
+        self.alignTo(8);
+        self.putByte(code);
+        self.putSignature(signature);
+        self.putU32(value);
     }
 
     fn putFieldSignature(self: *Builder, code: u8, value: []const u8) void {
@@ -456,19 +567,86 @@ pub const Reader = struct {
     }
 };
 
-fn findReplySerial(fields: []const u8) ?u32 {
-    var reader = Reader{ .data = fields };
-    while (reader.index < fields.len) {
-        reader.alignTo(8) catch return null;
-        const code = reader.readU8() catch return null;
-        const signature = reader.readSignature() catch return null;
+fn parseIncoming(
+    gpa: std.mem.Allocator,
+    fields_alloc: []u8,
+    fields_len: usize,
+    body: []u8,
+    message_type: u8,
+    serial: u32,
+) !Incoming {
+    var incoming = Incoming{
+        .gpa = gpa,
+        .fields_alloc = fields_alloc,
+        .fields_len = fields_len,
+        .body = body,
+        .message_type = message_type,
+        .serial = serial,
+    };
+    errdefer incoming.deinit();
 
-        if (code == 5 and std.mem.eql(u8, signature, "u")) {
-            return reader.readU32() catch null;
+    var reader = Reader{ .data = fields_alloc[0..fields_len] };
+    while (reader.index < fields_len) {
+        try reader.alignTo(8);
+        if (reader.index >= fields_len) break;
+        const code = try reader.readU8();
+        const signature = try reader.readSignature();
+
+        switch (code) {
+            1 => {
+                if (std.mem.eql(u8, signature, "o")) {
+                    incoming.path = try reader.readObjectPath();
+                } else {
+                    try reader.skipValue(signature);
+                }
+            },
+            2 => {
+                if (std.mem.eql(u8, signature, "s")) {
+                    incoming.interface = try reader.readString();
+                } else {
+                    try reader.skipValue(signature);
+                }
+            },
+            3 => {
+                if (std.mem.eql(u8, signature, "s")) {
+                    incoming.member = try reader.readString();
+                } else {
+                    try reader.skipValue(signature);
+                }
+            },
+            4 => {
+                if (std.mem.eql(u8, signature, "s")) {
+                    incoming.error_name = try reader.readString();
+                } else {
+                    try reader.skipValue(signature);
+                }
+            },
+            5 => {
+                if (std.mem.eql(u8, signature, "u")) {
+                    incoming.reply_serial = try reader.readU32();
+                } else {
+                    try reader.skipValue(signature);
+                }
+            },
+            7 => {
+                if (std.mem.eql(u8, signature, "s")) {
+                    incoming.sender = try reader.readString();
+                } else {
+                    try reader.skipValue(signature);
+                }
+            },
+            8 => {
+                if (std.mem.eql(u8, signature, "g")) {
+                    incoming.signature = try reader.readSignature();
+                } else {
+                    try reader.skipValue(signature);
+                }
+            },
+            else => try reader.skipValue(signature),
         }
-        reader.skipValue(signature) catch return null;
     }
-    return null;
+
+    return incoming;
 }
 
 fn alignmentFor(signature: []const u8) usize {
@@ -542,4 +720,31 @@ test "dbus skips signature values" {
     var reader = Reader{ .data = body.slice() };
     try reader.skipValue("g");
     try std.testing.expectEqual(body.len, reader.index);
+}
+
+test "dbus parses incoming header fields" {
+    var fields = Builder{};
+    fields.putFieldObjectPath(1, "/org/bluez/hci0");
+    fields.putFieldString(2, "s", "org.bluez.Agent1");
+    fields.putFieldString(3, "s", "RequestConfirmation");
+    fields.putFieldString(6, "s", ":1.42");
+    fields.putFieldString(7, "s", ":1.2");
+    fields.putFieldSignature(8, "os");
+    fields.putFieldU32(5, "u", 99);
+
+    const gpa = std.testing.allocator;
+    const fields_alloc = try gpa.dupe(u8, fields.slice());
+    const body = try gpa.alloc(u8, 0);
+
+    var incoming = try parseIncoming(gpa, fields_alloc, fields.len, body, method_call, 7);
+    defer incoming.deinit();
+
+    try std.testing.expectEqual(@as(u8, method_call), incoming.message_type);
+    try std.testing.expectEqual(@as(u32, 7), incoming.serial);
+    try std.testing.expectEqual(@as(?u32, 99), incoming.reply_serial);
+    try std.testing.expectEqualStrings("/org/bluez/hci0", incoming.path);
+    try std.testing.expectEqualStrings("org.bluez.Agent1", incoming.interface);
+    try std.testing.expectEqualStrings("RequestConfirmation", incoming.member);
+    try std.testing.expectEqualStrings(":1.2", incoming.sender);
+    try std.testing.expectEqualStrings("os", incoming.signature);
 }

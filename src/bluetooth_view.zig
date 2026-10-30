@@ -127,7 +127,7 @@ pub const Bluetooth = struct {
                     );
                 }
             },
-            .power, .discovery, .connect => {
+            .power, .discovery, .connect, .pair, .forget => {
                 if (self.pending_action == result.kind) {
                     self.pending_action = null;
                     self.pending_path_len = 0;
@@ -135,13 +135,20 @@ pub const Bluetooth = struct {
                 }
 
                 if (!result.success) {
-                    const prefix = switch (result.kind) {
-                        .power => "Power change failed",
-                        .discovery => "Discovery change failed",
-                        .connect => "Connection failed",
-                        else => unreachable,
-                    };
-                    self.setError(prefix, result.error_value orelse error.Protocol);
+                    const failure = result.error_value orelse error.Protocol;
+                    if (result.kind == .pair and failure == error.PasskeyRequired) {
+                        self.setNotice("Pairing needs a passkey; iube only supports just-works");
+                    } else {
+                        const prefix = switch (result.kind) {
+                            .power => "Power change failed",
+                            .discovery => "Discovery change failed",
+                            .connect => "Connection failed",
+                            .pair => "Pairing failed",
+                            .forget => "Forget failed",
+                            else => unreachable,
+                        };
+                        self.setError(prefix, failure);
+                    }
                 } else if (result.error_value != null) {
                     self.setNotice("Action succeeded, but refresh failed");
                 } else {
@@ -184,6 +191,16 @@ pub const Bluetooth = struct {
 
         if (key.keysym == 'd' or key.keysym == 'D') {
             if (!is_repeat) self.toggleDiscovery(s);
+            return;
+        }
+
+        if (key.keysym == 'a' or key.keysym == 'A') {
+            if (!is_repeat) self.pairSelected(s);
+            return;
+        }
+
+        if (key.keysym == ui.key_delete) {
+            if (!is_repeat) self.forgetSelected(s);
             return;
         }
 
@@ -417,7 +434,7 @@ pub const Bluetooth = struct {
             s.dirty = true;
             return;
         };
-        _ = self.submitAction(.power, active_adapter.path, !active_adapter.powered, s);
+        _ = self.submitAction(.power, active_adapter.path, active_adapter.path, !active_adapter.powered, s);
     }
 
     fn toggleDiscovery(self: *Bluetooth, s: *session.Session) void {
@@ -431,18 +448,34 @@ pub const Bluetooth = struct {
             s.dirty = true;
             return;
         }
-        _ = self.submitAction(.discovery, active_adapter.path, !active_adapter.discovering, s);
+        _ = self.submitAction(.discovery, active_adapter.path, active_adapter.path, !active_adapter.discovering, s);
     }
 
     fn toggleConnection(self: *Bluetooth, s: *session.Session) void {
         const device = self.currentDevice() orelse return;
-        _ = self.submitAction(.connect, device.path, !device.connected, s);
+        _ = self.submitAction(.connect, device.path, device.adapter_path, !device.connected, s);
+    }
+
+    fn pairSelected(self: *Bluetooth, s: *session.Session) void {
+        const device = self.currentDevice() orelse return;
+        if (device.paired) {
+            self.setNotice("Device is already paired");
+            s.dirty = true;
+            return;
+        }
+        _ = self.submitAction(.pair, device.path, device.adapter_path, false, s);
+    }
+
+    fn forgetSelected(self: *Bluetooth, s: *session.Session) void {
+        const device = self.currentDevice() orelse return;
+        _ = self.submitAction(.forget, device.path, device.adapter_path, false, s);
     }
 
     fn submitAction(
         self: *Bluetooth,
         kind: worker_mod.Kind,
         path: []const u8,
+        adapter_path: []const u8,
         value: bool,
         s: *session.Session,
     ) bool {
@@ -461,13 +494,20 @@ pub const Bluetooth = struct {
             s.dirty = true;
             return false;
         }
+        if (adapter_path.len > 256) {
+            self.setNotice("Adapter path too long");
+            s.dirty = true;
+            return false;
+        }
 
         var job = worker_mod.Job{
             .kind = kind,
             .path_len = path.len,
+            .adapter_path_len = adapter_path.len,
             .value = value,
         };
         @memcpy(job.path[0..path.len], path);
+        @memcpy(job.adapter_path[0..adapter_path.len], adapter_path);
 
         self.worker.?.submit(job) catch |err| {
             self.setError("Bluetooth action failed", err);
@@ -485,10 +525,11 @@ pub const Bluetooth = struct {
         return true;
     }
 
-    fn actionPendingFor(self: *Bluetooth, device: bluetooth.Device) bool {
-        if (self.pending_action != .connect) return false;
-        if (self.pending_path_len != device.path.len) return false;
-        return std.mem.eql(u8, self.pending_path[0..self.pending_path_len], device.path);
+    fn pendingKindFor(self: *Bluetooth, device: bluetooth.Device) ?worker_mod.Kind {
+        const kind = self.pending_action orelse return null;
+        if (self.pending_path_len != device.path.len) return null;
+        if (!std.mem.eql(u8, self.pending_path[0..self.pending_path_len], device.path)) return null;
+        return kind;
     }
 
     fn listGeometry(_: *Bluetooth, s: *session.Session) ListGeometry {
@@ -708,12 +749,14 @@ pub const Bluetooth = struct {
                 output_scale,
             );
 
-            const pending = self.actionPendingFor(device);
-            const status_text = if (pending)
-                (if (self.pending_connect) "Connecting..." else "Disconnecting...")
-            else
-                device.stateLabel();
-            const status_color = if (pending)
+            const pending_kind = self.pendingKindFor(device);
+            const status_text = if (pending_kind) |kind| switch (kind) {
+                .connect => if (self.pending_connect) "Connecting..." else "Disconnecting...",
+                .pair => "Pairing...",
+                .forget => "Forgetting...",
+                else => device.stateLabel(),
+            } else device.stateLabel();
+            const status_color = if (pending_kind != null)
                 cfg.warm_1
             else if (device.connected)
                 cfg.accent
@@ -858,7 +901,7 @@ pub const Bluetooth = struct {
         const text = if (self.error_len > 0)
             self.errorSlice()
         else
-            "Up/Down  Enter toggle  P Power on/off  D discover  R refresh  Esc";
+            "Up/Down  Enter toggle  P power  D discover  A pair  Del forget  R refresh  Esc";
 
         _ = canvas.textFit(
             ui.px(m.margin, output_scale),

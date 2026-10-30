@@ -14,6 +14,7 @@ const launcher = @import("launcher.zig");
 const panel = @import("panel.zig");
 const placeholder = @import("placeholder.zig");
 const audio_view = @import("audio_view.zig");
+const bluetooth = @import("bluetooth.zig");
 const bluetooth_view = @import("bluetooth_view.zig");
 const wifi_view = @import("wifi_view.zig");
 const power_view = @import("power_view.zig");
@@ -29,6 +30,8 @@ const usage =
     \\  iube launch      open the application launcher
     \\  iube audio       open the audio manager
     \\  iube bluetooth   open the Bluetooth controller
+    \\  iube bluetooth pair <name|address>    pair a device
+    \\  iube bluetooth forget <name|address>  forget a device
     \\  iube wifi        open the Wi-Fi manager
     \\  iube power       open the power manager
     \\  iube help        show this help
@@ -60,6 +63,7 @@ pub fn main(init: std.process.Init) !void {
         return runAudio(init, env);
     }
     if (std.mem.eql(u8, command, "bluetooth")) {
+        if (args.len > 2) return runBluetoothCli(init, args[2..]);
         return runBluetooth(init, env);
     }
     if (std.mem.eql(u8, command, "wifi")) {
@@ -150,6 +154,190 @@ fn runPower(init: std.process.Init, env: config.Env) !void {
     try session.run(init.io, init.gpa, env, &view);
 }
 
+fn runBluetoothCli(init: std.process.Init, args: []const []const u8) !void {
+    const command = bluetooth.parseCliCommand(args) catch |err| {
+        switch (err) {
+            error.MissingDevice => printStderr(init.io, "iube: this command needs a device name or address\n\n"),
+            error.TooManyArguments => printStderr(init.io, "iube: too many arguments; quote device names that contain spaces\n\n"),
+            error.UnknownCommand => printStderr(init.io, "iube: unknown bluetooth command\n\n"),
+        }
+        printStderr(init.io, bluetooth_usage);
+        std.process.exit(2);
+    };
+
+    switch (command) {
+        .help => printStdout(init.io, bluetooth_usage),
+        .pair => |target| try pairBluetoothDevice(init, target),
+        .forget => |target| try forgetBluetoothDevice(init, target),
+    }
+}
+
+fn pairBluetoothDevice(init: std.process.Init, target: []const u8) !void {
+    var client = bluetooth.Client.connect(init.io, init.gpa) catch |err| {
+        printMessage(init.io, .stderr, "iube: cannot connect to the system D-Bus: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer client.deinit();
+
+    var state = client.refresh(init.gpa) catch |err| {
+        printMessage(init.io, .stderr, "iube: cannot read the BlueZ device tree: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer state.deinit();
+
+    const device = resolveOrExit(init, state, target);
+    if (state.adapter()) |adapter| {
+        if (!adapter.powered) {
+            printStderr(init.io, "iube: the Bluetooth adapter is off; turn it on in `iube bluetooth` first\n");
+            std.process.exit(1);
+        }
+    }
+
+    const outcome = client.pair(device.path) catch |err| {
+        switch (err) {
+            error.MethodFailed => printStderr(init.io, "iube: could not register the pairing agent (is bluetoothd running?)\n"),
+            error.PasskeyRequired => printMessage(
+                init.io,
+                .stderr,
+                "iube: \"{s}\" requires a passkey or PIN. This agent only supports just-works pairing.\n",
+                .{device.label()},
+            ),
+            error.PairRejected => printMessage(
+                init.io,
+                .stderr,
+                "iube: pairing with \"{s}\" was rejected. Check that the device is in pairing mode.\n",
+                .{device.label()},
+            ),
+            error.PairTimedOut => printMessage(
+                init.io,
+                .stderr,
+                "iube: pairing with \"{s}\" timed out.\n",
+                .{device.label()},
+            ),
+            error.PairCancelled => printMessage(
+                init.io,
+                .stderr,
+                "iube: pairing with \"{s}\" was cancelled.\n",
+                .{device.label()},
+            ),
+            error.DeviceNotAvailable => printMessage(
+                init.io,
+                .stderr,
+                "iube: \"{s}\" is not available. Put it in pairing mode and try again.\n",
+                .{device.label()},
+            ),
+            error.AdapterNotReady => printStderr(init.io, "iube: the Bluetooth adapter is not ready\n"),
+            error.PairInProgress => printMessage(
+                init.io,
+                .stderr,
+                "iube: another pairing attempt with \"{s}\" is already in progress.\n",
+                .{device.label()},
+            ),
+            error.PairFailed => printMessage(
+                init.io,
+                .stderr,
+                "iube: pairing with \"{s}\" failed.\n",
+                .{device.label()},
+            ),
+            else => printMessage(
+                init.io,
+                .stderr,
+                "iube: pairing with \"{s}\" failed: {s}\n",
+                .{ device.label(), @errorName(err) },
+            ),
+        }
+        std.process.exit(1);
+    };
+
+    switch (outcome) {
+        .paired => printMessage(init.io, .stdout, "Paired \"{s}\" ({s}).\n", .{ device.label(), device.address }),
+        .already_paired => printMessage(init.io, .stdout, "\"{s}\" ({s}) is already paired.\n", .{ device.label(), device.address }),
+    }
+}
+
+fn forgetBluetoothDevice(init: std.process.Init, target: []const u8) !void {
+    var client = bluetooth.Client.connect(init.io, init.gpa) catch |err| {
+        printMessage(init.io, .stderr, "iube: cannot connect to the system D-Bus: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer client.deinit();
+
+    var state = client.refresh(init.gpa) catch |err| {
+        printMessage(init.io, .stderr, "iube: cannot read the BlueZ device tree: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer state.deinit();
+
+    const device = resolveOrExit(init, state, target);
+    client.removeDevice(device) catch |err| {
+        printMessage(
+            init.io,
+            .stderr,
+            "iube: could not forget \"{s}\": {s}\n",
+            .{ device.label(), @errorName(err) },
+        );
+        std.process.exit(1);
+    };
+
+    printMessage(init.io, .stdout, "Forgot \"{s}\" ({s}).\n", .{ device.label(), device.address });
+}
+
+fn resolveOrExit(init: std.process.Init, state: bluetooth.State, target: []const u8) bluetooth.Device {
+    return switch (bluetooth.resolveDevice(state.devices, target)) {
+        .found => |index| state.devices[index],
+        .ambiguous => {
+            printMessage(
+                init.io,
+                .stderr,
+                "iube: several Bluetooth devices match \"{s}\"; use the address instead.\n",
+                .{target},
+            );
+            std.process.exit(1);
+        },
+        .not_found => {
+            printMessage(
+                init.io,
+                .stderr,
+                "iube: no Bluetooth device matches \"{s}\". Run `iube bluetooth` and press D to discover it.\n",
+                .{target},
+            );
+            std.process.exit(1);
+        },
+    };
+}
+
+const Output = enum { stdout, stderr };
+
+fn printMessage(io: std.Io, output: Output, comptime format: []const u8, args: anytype) void {
+    var buffer: [1024]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, format, args) catch {
+        switch (output) {
+            .stdout => printStdout(io, "iube: message too long\n"),
+            .stderr => printStderr(io, "iube: message too long\n"),
+        }
+        return;
+    };
+    switch (output) {
+        .stdout => printStdout(io, text),
+        .stderr => printStderr(io, text),
+    }
+}
+
+const bluetooth_usage =
+    \\Usage:
+    \\  iube bluetooth                        open the Bluetooth controller
+    \\  iube bluetooth pair <name|address>    pair a device
+    \\  iube bluetooth forget <name|address>  forget a device
+    \\
+    \\The pairing agent only supports just-works pairing. Devices that require a
+    \\passkey or PIN cannot be paired yet.
+    \\
+;
+
 fn printStdout(io: std.Io, text: []const u8) void {
     std.Io.File.stdout().writeStreamingAll(io, text) catch {};
+}
+
+fn printStderr(io: std.Io, text: []const u8) void {
+    std.Io.File.stderr().writeStreamingAll(io, text) catch {};
 }
