@@ -52,6 +52,37 @@ second confirmation; suspend, hibernate and lock run immediately. Unavailable
 actions stay visible and report that they cannot be used instead of disappearing
 silently.
 
+## Enabling the profile on Lenovo IdeaPad/Yoga
+
+Some Lenovo IdeaPad and Yoga models expose the DYTC v4 interface, but the kernel
+does not register `platform_profile` unless the `ideapad_laptop` module is loaded
+with `allow_v4_dytc=Y`. The kernel log states this explicitly:
+
+```text
+ideapad_acpi VPC2004:00: DYTC_VERSION 4 support may not work.
+Pass ideapad_laptop.allow_v4_dytc=Y on the kernel commandline to enable
+```
+
+On NixOS, add both settings:
+
+```nix
+boot.extraModprobeConfig = "options ideapad_laptop allow_v4_dytc=Y";
+services.power-profiles-daemon.enable = true;
+```
+
+Rebuild and reboot, then verify:
+
+```sh
+cat /sys/firmware/acpi/platform_profile
+cat /sys/firmware/acpi/platform_profile_choices
+```
+
+The choices should include `low-power balanced performance`. Without
+power-profiles-daemon the profile row can still appear, but writes to
+`platform_profile` usually require root; iube reports the permission error
+instead of silently ignoring it. With power-profiles-daemon running, iube changes
+the profile through `net.hadess.PowerProfiles`.
+
 ## Current limitations
 
 - Only the first system battery is displayed. Multiple battery packs are not
