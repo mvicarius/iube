@@ -14,6 +14,8 @@ iube audio              -> audio_view.Audio
 iube bluetooth          -> bluetooth_view.Bluetooth
 iube wifi               -> wifi_view.Wifi
 iube power              -> power_view.Power
+iube brightness         -> brightness_view.Brightness
+iube brightness <action> -> brightness CLI without Wayland
 iube help / version     -> text output, no Wayland connection
 ```
 
@@ -40,6 +42,9 @@ src/
   wifi.zig         NetworkManager device, access point and profile model over D-Bus
   power_view.zig   power controller: battery, profiles and session actions
   power.zig        sysfs power supply, platform profile and logind client
+  brightness_view.zig  brightness controller: sysfs devices and logind changes
+  brightness.zig   sysfs backlight enumeration and logind SetBrightness client
+  brightness_cli.zig   one-shot brightness commands without Wayland
   dbus.zig         minimal system D-Bus client (no libdbus)
 
   placeholder.zig  "coming soon" view for unfinished tools
@@ -73,8 +78,8 @@ Every command uses:
 Only the view differs. `audio_view.zig` additionally uses `audio.zig`,
 `bluetooth_view.zig` uses `bluetooth.zig` and `dbus.zig`, `wifi_view.zig` uses
 `wifi.zig` and `dbus.zig`, and `power_view.zig` uses `power.zig` and
-`dbus.zig`. These are specific to their tools but still linked without any new
-dependency.
+`dbus.zig`. `brightness_view.zig` uses `brightness.zig` and `dbus.zig`. These
+are specific to their tools but still linked without any new dependency.
 
 ## View interface
 
@@ -135,8 +140,9 @@ All views share the same 640 px base width, multiplied by `scale` from the
 config. Heights differ:
 
 - Launcher: 640×360 base; the list scrolls.
-- Audio, Bluetooth, Wi-Fi and Power: the window grows to fit the visible
-  controls; Power uses a battery summary plus five action rows.
+- Audio, Bluetooth, Wi-Fi, Power and Brightness: the window grows to fit the
+  visible controls; Power uses a battery summary plus five action rows, and
+  Brightness uses a selected-device summary plus up to four device rows.
 - Control panel: height is computed from the number of tools:
   `margin * 2 + rows * row_step - gap`. Every entry is visible; the panel does
   not implement scrolling.
@@ -159,5 +165,6 @@ Until step 2 is done, the registry entry stays `coming_soon` and the generic
 ## Tests
 
 `zig build test` covers the pure modules: config parsing, rendering primitives,
-metrics/window sizing and the tool registry. The Wayland views are exercised by
-running the binary in a layer-shell-capable compositor.
+metrics/window sizing, the tool registry, sysfs parsing and D-Bus marshalling.
+The Wayland views are exercised by running the binary in a layer-shell-capable
+compositor.

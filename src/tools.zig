@@ -64,6 +64,14 @@ pub const all = [_]Tool{
         .backend = "sysfs power_supply/platform_profile and logind over D-Bus.",
         .icon = @embedFile("icons/power-off.png"),
     },
+    .{
+        .id = "brightness",
+        .name = "Brightness",
+        .description = "Backlight level and device selection.",
+        .status = .available,
+        .backend = "sysfs /sys/class/backlight and logind SetBrightness over D-Bus.",
+        .icon = @embedFile("icons/sun.png"),
+    },
 };
 
 pub fn find(id: []const u8) ?*const Tool {

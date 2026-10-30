@@ -1,8 +1,8 @@
 # Tool backends
 
 This document describes how the iube management tools are meant to work, and
-how the implemented ones choose their backend. Audio, Bluetooth, Wi-Fi and
-Power are implemented; the remaining entries are plans.
+how the implemented ones choose their backend. Audio, Bluetooth, Wi-Fi, Power
+and Brightness are implemented; the remaining entries are plans.
 
 ## Dependency policy
 
@@ -113,6 +113,18 @@ uses the ACPI platform profile through sysfs or power-profiles-daemon, and
 performs suspend, hibernate, restart, shutdown and lock requests through logind.
 It does not link UPower, libsystemd or libnm, and it does not keep a resident
 daemon.
+
+## Brightness (`iube brightness`)
+
+**Status:** initial implementation. The dedicated documentation, including the
+sysfs fields, logind session lookup, controls, CLI syntax, limitations and
+planned work, lives in [brightness.md](brightness.md).
+
+The brightness controller enumerates `/sys/class/backlight`, reads
+`brightness`/`max_brightness` and changes the level with logind's
+`Session.SetBrightness` method. It does not use `brightnessctl`, write sysfs
+directly, need root or install udev rules. The `up`, `down`, `set`, `get` and
+`list` actions bypass Wayland and exit after one operation.
 
 ## Cross-tool conventions
 

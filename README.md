@@ -45,7 +45,8 @@ Hyprland, on a 1920×1080 output at 1× scale.
 More information about each feature lives in the [docs](docs) folder:
 [launcher](docs/launcher.md), [audio](docs/audio.md),
 [Bluetooth](docs/bluetooth.md), [Wi-Fi](docs/wifi.md),
-[Power](docs/power.md), [architecture](docs/architecture.md), and
+[Power](docs/power.md), [Brightness](docs/brightness.md),
+[architecture](docs/architecture.md), and
 [planned backends](docs/tools.md).
 
 ## Design goals and philosophy
