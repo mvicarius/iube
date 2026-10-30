@@ -9,8 +9,6 @@ const ui = @import("ui.zig");
 const session = @import("session.zig");
 const power = @import("power.zig");
 
-const base_header_height = 36;
-const base_footer_height = 24;
 const base_summary_height = 56;
 const base_profile_height = 32;
 const refresh_ms = 5000;
@@ -24,13 +22,6 @@ const actions = [_]power.Action{
     .hibernate,
     .reboot,
     .power_off,
-};
-
-const ListGeometry = struct {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
 };
 
 pub const Power = struct {
@@ -47,9 +38,7 @@ pub const Power = struct {
     last_refresh_request_ms: i64 = 0,
     confirm: ?power.Action = null,
 
-    error_buffer: [256]u8 = undefined,
-    error_len: usize = 0,
-    error_deadline_ms: i64 = 0,
+    notice: ui.Notice = .{},
 
     pub fn init(io: std.Io, gpa: std.mem.Allocator) Power {
         var view = Power{
@@ -75,10 +64,10 @@ pub const Power = struct {
 
     pub fn windowSize(self: *Power, metrics: ui.Metrics) ui.WindowSize {
         const m = metrics;
-        const header = ui.scaled(base_header_height, m.scale);
+        const header = ui.scaled(ui.base_header_height, m.scale);
         const summary = ui.scaled(base_summary_height, m.scale);
         const profile = if (self.hasProfile()) ui.scaled(base_profile_height, m.scale) else 0;
-        const footer = ui.scaled(base_footer_height, m.scale);
+        const footer = ui.scaled(ui.base_footer_height, m.scale);
         const content = @as(i32, action_count) * m.row_step - m.gap;
         const list_y = m.margin + header + m.gap + summary +
             (if (profile > 0) m.gap + profile else 0) + m.gap;
@@ -93,11 +82,7 @@ pub const Power = struct {
     }
 
     pub fn tick(self: *Power, s: *session.Session) void {
-        if (self.error_len > 0 and self.error_deadline_ms > 0 and s.nowMs() >= self.error_deadline_ms) {
-            self.error_len = 0;
-            self.error_deadline_ms = 0;
-            s.dirty = true;
-        }
+        if (self.notice.expire(s.nowMs())) s.dirty = true;
 
         if (self.confirm != null) return;
         const now = s.nowMs();
@@ -212,7 +197,7 @@ pub const Power = struct {
         const m = s.metrics;
         const cfg = s.cfg;
         const width: i32 = @intCast(s.client.logical_width);
-        const header_height = ui.scaled(base_header_height, m.scale);
+        const header_height = ui.scaled(ui.base_header_height, m.scale);
         const title_y = ui.px(m.margin, output_scale) +
             @divTrunc(ui.px(header_height, output_scale) - text_height, 2);
         _ = canvas.text(
@@ -243,27 +228,16 @@ pub const Power = struct {
             break :blk cfg.muted;
         } else cfg.muted;
 
-        const small_margin_px = ui.px(m.small_margin, output_scale);
-        const badge_width = font.textWidth(badge_text, font_scale) + small_margin_px * 2;
-        const badge_height = text_height + small_margin_px;
-        const badge_x = ui.px(width - m.margin, output_scale) - badge_width;
-        const badge_y = ui.px(m.margin, output_scale) +
-            @divTrunc(ui.px(header_height, output_scale) - badge_height, 2);
-
-        canvas.roundRect(
-            badge_x,
-            badge_y,
-            badge_width,
-            badge_height,
-            ui.px(m.row_radius, output_scale),
-            cfg.highlight_low,
-        );
-        _ = canvas.text(
-            badge_x + small_margin_px,
-            badge_y + @divTrunc(badge_height - text_height, 2),
+        _ = ui.drawBadge(
+            canvas,
+            cfg,
+            m,
+            output_scale,
+            width,
+            font_scale,
+            text_height,
             badge_text,
             badge_color,
-            font_scale,
         );
     }
 
@@ -420,7 +394,7 @@ pub const Power = struct {
             font_scale,
         );
 
-        const value = profileDisplay(profile.active);
+        const value = power.profileDisplay(profile.active);
         const value_width = font.textWidth(value, font_scale);
         _ = canvas.text(
             ui.px(geometry.x + geometry.w - m.small_margin, output_scale) - value_width,
@@ -556,27 +530,19 @@ pub const Power = struct {
         output_scale: i32,
         font_scale: f32,
     ) void {
-        const m = s.metrics;
-        const cfg = s.cfg;
-        const hint_scale = font_scale * 0.8;
-        const hint_height = ui.textHeight(hint_scale);
-        const y = ui.px(@intCast(s.client.logical_height), output_scale) -
-            ui.px(m.margin, output_scale) - hint_height;
-        const width = ui.px(@max(0, @as(i32, @intCast(s.client.logical_width)) - m.margin * 2), output_scale);
-        const text = if (self.error_len > 0)
-            self.errorSlice()
-        else if (self.hasProfile())
-            "Up/Down select  Enter run  Tab profile  R refresh  Esc"
-        else
-            "Up/Down select  Enter run  R refresh  Esc";
-
-        _ = canvas.textFit(
-            ui.px(m.margin, output_scale),
-            y,
-            text,
-            if (self.error_len > 0) cfg.warm_2 else cfg.muted,
-            hint_scale,
-            width,
+        ui.drawFooter(
+            canvas,
+            s.cfg,
+            s.metrics,
+            @intCast(s.client.logical_width),
+            @intCast(s.client.logical_height),
+            output_scale,
+            font_scale,
+            self.notice.text(),
+            if (self.hasProfile())
+                "Up/Down select  Enter run  Tab profile  R refresh  Esc"
+            else
+                "Up/Down select  Enter run  R refresh  Esc",
         );
     }
 
@@ -589,38 +555,19 @@ pub const Power = struct {
         text_height: i32,
     ) void {
         const m = s.metrics;
-        const cfg = s.cfg;
         const width: i32 = @intCast(s.client.logical_width);
-        const x = ui.px(m.margin, output_scale);
-        const y = ui.px(m.margin + ui.scaled(base_header_height, m.scale) + m.gap, output_scale);
-
-        _ = canvas.text(
-            x,
-            y,
-            "Power information unavailable",
-            cfg.warm_2,
-            font_scale,
-        );
-
-        const body_scale = font_scale * 0.85;
-        const body_height = ui.textHeight(body_scale);
-        const line_height = body_height + ui.px(m.small_margin, output_scale);
-        const next = ui.drawWrapped(
+        ui.drawError(
             canvas,
-            x,
-            y + text_height + ui.px(m.small_margin, output_scale),
-            ui.px(@max(0, width - m.margin * 2), output_scale),
-            line_height,
-            self.errorSlice(),
-            cfg.warm_2,
-            body_scale,
-        );
-        _ = canvas.text(
-            x,
-            next + ui.px(m.small_margin, output_scale),
-            "Press R to retry, or Esc to close.",
-            cfg.muted,
-            body_scale,
+            s.cfg,
+            m,
+            m.margin,
+            m.margin + ui.scaled(ui.base_header_height, m.scale) + m.gap,
+            @max(0, width - m.margin * 2),
+            output_scale,
+            font_scale,
+            text_height,
+            "Power information unavailable",
+            self.notice.text(),
         );
     }
 
@@ -696,8 +643,7 @@ pub const Power = struct {
     }
 
     fn reload(self: *Power) void {
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         self.confirm = null;
 
         if (self.client) |*client| client.deinit();
@@ -813,16 +759,7 @@ pub const Power = struct {
             s.dirty = true;
             return;
         };
-        if (profile.choices.len == 0) return;
-
-        var active_index: usize = 0;
-        for (profile.choices, 0..) |choice, index| {
-            if (std.mem.eql(u8, choice, profile.active)) {
-                active_index = index;
-                break;
-            }
-        }
-        const next = profile.choices[(active_index + 1) % profile.choices.len];
+        const next = profile.next() orelse return;
 
         if (self.client) |*client| {
             client.setProfile(profile, next) catch |err| {
@@ -856,18 +793,18 @@ pub const Power = struct {
         return state.profile != null;
     }
 
-    fn summaryGeometry(_: *Power, s: *session.Session) ListGeometry {
+    fn summaryGeometry(_: *Power, s: *session.Session) ui.ListLayout {
         const width: i32 = @intCast(s.client.logical_width);
         const m = s.metrics;
         return .{
             .x = m.margin,
-            .y = m.margin + ui.scaled(base_header_height, m.scale) + m.gap,
+            .y = m.margin + ui.scaled(ui.base_header_height, m.scale) + m.gap,
             .w = @max(0, width - m.margin * 2),
             .h = ui.scaled(base_summary_height, m.scale),
         };
     }
 
-    fn profileGeometry(self: *Power, s: *session.Session) ListGeometry {
+    fn profileGeometry(self: *Power, s: *session.Session) ui.ListLayout {
         const summary = self.summaryGeometry(s);
         const m = s.metrics;
         return .{
@@ -878,7 +815,7 @@ pub const Power = struct {
         };
     }
 
-    fn listGeometry(self: *Power, s: *session.Session) ListGeometry {
+    fn listGeometry(self: *Power, s: *session.Session) ui.ListLayout {
         const width: i32 = @intCast(s.client.logical_width);
         const m = s.metrics;
         const summary = self.summaryGeometry(s);
@@ -935,34 +872,15 @@ pub const Power = struct {
     }
 
     fn setError(self: *Power, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Power error";
-        self.error_len = text.len;
-        self.error_deadline_ms = self.nowMs() + 5000;
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 5000);
     }
 
     fn setFatalError(self: *Power, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Power error";
-        self.error_len = text.len;
-        self.error_deadline_ms = 0;
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 0);
     }
 
     fn setNotice(self: *Power, text: []const u8) void {
-        const length = @min(text.len, self.error_buffer.len);
-        @memcpy(self.error_buffer[0..length], text[0..length]);
-        self.error_len = length;
-        self.error_deadline_ms = self.nowMs() + 5000;
-    }
-
-    fn errorSlice(self: *const Power) []const u8 {
-        return self.error_buffer[0..self.error_len];
+        self.notice.set(text, self.nowMs(), 5000);
     }
 };
 
@@ -972,12 +890,4 @@ fn confirmTitle(action: power.Action) []const u8 {
         .power_off => "Shut down the computer?",
         else => "Are you sure?",
     };
-}
-
-fn profileDisplay(name: []const u8) []const u8 {
-    if (std.mem.eql(u8, name, "low-power")) return "Low power";
-    if (std.mem.eql(u8, name, "balanced")) return "Balanced";
-    if (std.mem.eql(u8, name, "performance")) return "Performance";
-    if (std.mem.eql(u8, name, "power-saver")) return "Power saver";
-    return name;
 }

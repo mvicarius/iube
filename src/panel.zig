@@ -107,7 +107,7 @@ pub const Panel = struct {
         s.running = false;
     }
 
-    fn listGeometry(s: *session.Session) struct { x: i32, y: i32, w: i32, h: i32 } {
+    fn listGeometry(s: *session.Session) ui.ListLayout {
         const width: i32 = @intCast(s.client.logical_width);
         const height: i32 = @intCast(s.client.logical_height);
         const m = s.metrics;
@@ -120,20 +120,14 @@ pub const Panel = struct {
     }
 
     fn hitRow(_: *Panel, s: *session.Session) ?usize {
-        if (!s.pointer_inside) return null;
-
-        const geometry = listGeometry(s);
-        const fx: i32 = @intFromFloat(@floor(s.pointer_x));
-        const fy: i32 = @intFromFloat(@floor(s.pointer_y));
-
-        if (fx < geometry.x or fx >= geometry.x + geometry.w) return null;
-        if (fy < geometry.y or fy >= geometry.y + geometry.h) return null;
-
-        const local = fy - geometry.y;
-        const index: usize = @intCast(@divTrunc(local, s.metrics.row_step));
-        if (index >= tools.all.len) return null;
-        if (@mod(local, s.metrics.row_step) >= s.metrics.row_height) return null;
-        return index;
+        return listGeometry(s).hitRow(
+            s.pointer_inside,
+            s.pointer_x,
+            s.pointer_y,
+            0,
+            tools.all.len,
+            s.metrics,
+        );
     }
 
     fn updateHover(self: *Panel, s: *session.Session) void {
@@ -197,7 +191,7 @@ pub const Panel = struct {
                     ui.px(m.icon_radius, output_scale),
                     cfg.highlight_low,
                 );
-                const initial = appInitial(tool.name);
+                const initial = ui.appInitial(tool.name);
                 const initial_width = font.textWidth(initial, font_scale);
                 _ = canvas.text(
                     icon_x + @divTrunc(icon_px - initial_width, 2),
@@ -219,31 +213,14 @@ pub const Panel = struct {
                 0,
                 ui.px(geometry.x + geometry.w - m.small_margin, output_scale) - name_x,
             );
-            const status_text = if (tool.status == .coming_soon) "Coming soon" else "";
-            const status_gap = ui.px(m.small_margin, output_scale);
-            const status_width = if (status_text.len > 0)
-                font.textWidth(status_text, font_scale)
-            else
-                0;
-            const name_max = @max(
-                0,
-                name_width - (if (status_text.len > 0) status_width + status_gap else 0),
-            );
-            const name_end = canvas.textFit(
+            _ = canvas.textFit(
                 name_x,
                 name_y,
                 tool.name,
                 cfg.text,
                 font_scale,
-                name_max,
+                name_width,
             );
-            if (status_text.len > 0) {
-                const status_x = @min(
-                    name_end + status_gap,
-                    name_x + name_width - status_width,
-                );
-                _ = canvas.text(status_x, name_y, status_text, cfg.dark_accent, font_scale);
-            }
         }
     }
 
@@ -263,12 +240,3 @@ pub const Panel = struct {
         return null;
     }
 };
-
-fn appInitial(name: []const u8) []const u8 {
-    if (name.len == 0) return "?";
-    const len = std.unicode.utf8ByteSequenceLength(name[0]) catch return "?";
-    if (len > name.len) return "?";
-    const codepoint = std.unicode.utf8Decode(name[0..len]) catch return "?";
-    if (font.glyph(codepoint) == null) return "?";
-    return name[0..len];
-}

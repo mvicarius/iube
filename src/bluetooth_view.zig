@@ -16,8 +16,6 @@ const session = @import("session.zig");
 const bluetooth = @import("bluetooth.zig");
 const worker_mod = @import("bluetooth_worker.zig");
 
-const base_header_height = 36;
-const base_footer_height = 24;
 const discovery_refresh_ms = 2000;
 const idle_refresh_ms = 5000;
 
@@ -45,9 +43,7 @@ pub const Bluetooth = struct {
     forget_path_len: usize = 0,
     forget_deadline_ms: i64 = 0,
 
-    error_buffer: [256]u8 = undefined,
-    error_len: usize = 0,
-    error_deadline_ms: i64 = 0,
+    notice: ui.Notice = .{},
 
     pub fn init(io: std.Io, gpa: std.mem.Allocator) Bluetooth {
         var view = Bluetooth{
@@ -93,11 +89,7 @@ pub const Bluetooth = struct {
             }
         }
 
-        if (self.error_len > 0 and self.error_deadline_ms > 0 and s.nowMs() >= self.error_deadline_ms) {
-            self.error_len = 0;
-            self.error_deadline_ms = 0;
-            s.dirty = true;
-        }
+        if (self.notice.expire(s.nowMs())) s.dirty = true;
 
         if (self.worker == null or self.pending_action != null or self.refresh_pending) return;
 
@@ -161,8 +153,7 @@ pub const Bluetooth = struct {
                 } else if (result.error_value != null) {
                     self.setNotice("Action succeeded, but refresh failed");
                 } else {
-                    self.error_len = 0;
-                    self.error_deadline_ms = 0;
+                    self.notice.clear();
                 }
             },
         }
@@ -289,8 +280,7 @@ pub const Bluetooth = struct {
     }
 
     fn reload(self: *Bluetooth) void {
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         self.pending_action = null;
         self.pending_path_len = 0;
         self.pending_connect = false;
@@ -368,34 +358,15 @@ pub const Bluetooth = struct {
     }
 
     fn setError(self: *Bluetooth, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Bluetooth error";
-        self.error_len = text.len;
-        self.error_deadline_ms = self.nowMs() + 5000;
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 5000);
     }
 
     fn setFatalError(self: *Bluetooth, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Bluetooth error";
-        self.error_len = text.len;
-        self.error_deadline_ms = 0;
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 0);
     }
 
     fn setNotice(self: *Bluetooth, text: []const u8) void {
-        const length = @min(text.len, self.error_buffer.len);
-        @memcpy(self.error_buffer[0..length], text[0..length]);
-        self.error_len = length;
-        self.error_deadline_ms = self.nowMs() + 5000;
-    }
-
-    fn errorSlice(self: *const Bluetooth) []const u8 {
-        return self.error_buffer[0..self.error_len];
+        self.notice.set(text, self.nowMs(), 5000);
     }
 
     fn devices(self: *Bluetooth) ?[]bluetooth.Device {
@@ -552,8 +523,7 @@ pub const Bluetooth = struct {
         self.pending_path_len = path.len;
         self.pending_connect = kind == .connect and value;
         @memcpy(self.pending_path[0..path.len], path);
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         s.dirty = true;
         return true;
     }
@@ -565,12 +535,12 @@ pub const Bluetooth = struct {
         return kind;
     }
 
-    fn listGeometry(_: *Bluetooth, s: *session.Session) ListGeometry {
+    fn listGeometry(_: *Bluetooth, s: *session.Session) ui.ListLayout {
         const width: i32 = @intCast(s.client.logical_width);
         const height: i32 = @intCast(s.client.logical_height);
         const m = s.metrics;
-        const header = ui.scaled(base_header_height, m.scale);
-        const footer = ui.scaled(base_footer_height, m.scale);
+        const header = ui.scaled(ui.base_header_height, m.scale);
+        const footer = ui.scaled(ui.base_footer_height, m.scale);
         const y = m.margin + header + m.gap;
         return .{
             .x = m.margin,
@@ -582,36 +552,30 @@ pub const Bluetooth = struct {
 
     fn maxScroll(self: *Bluetooth, s: *session.Session) i32 {
         const list = self.devices() orelse return 0;
-        const geometry = self.listGeometry(s);
-        const content = @as(i32, @intCast(list.len)) * s.metrics.row_step - s.metrics.gap;
-        return @max(0, content - geometry.h);
+        return self.listGeometry(s).maxScroll(list.len, s.metrics, s.metrics.gap);
     }
 
     fn ensureSelectionVisible(self: *Bluetooth, s: *session.Session) void {
-        const geometry = self.listGeometry(s);
-        const top = @as(i32, @intCast(self.selected)) * s.metrics.row_step;
-        const bottom = top + s.metrics.row_height;
-        if (top < self.scroll) self.scroll = top;
-        if (bottom > self.scroll + geometry.h) self.scroll = bottom - geometry.h;
-        self.scroll = std.math.clamp(self.scroll, 0, self.maxScroll(s));
+        const list = self.devices() orelse return;
+        self.listGeometry(s).ensureSelectionVisible(
+            self.selected,
+            &self.scroll,
+            s.metrics,
+            list.len,
+            s.metrics.gap,
+        );
     }
 
     fn hitRow(self: *Bluetooth, s: *session.Session) ?usize {
-        if (!s.pointer_inside) return null;
         const list = self.devices() orelse return null;
-
-        const geometry = self.listGeometry(s);
-        const fx: i32 = @intFromFloat(@floor(s.pointer_x));
-        const fy: i32 = @intFromFloat(@floor(s.pointer_y));
-        if (fx < geometry.x or fx >= geometry.x + geometry.w) return null;
-        if (fy < geometry.y or fy >= geometry.y + geometry.h) return null;
-
-        const local = fy - geometry.y + self.scroll;
-        if (local < 0) return null;
-        const index: usize = @intCast(@divTrunc(local, s.metrics.row_step));
-        if (index >= list.len) return null;
-        if (@mod(local, s.metrics.row_step) >= s.metrics.row_height) return null;
-        return index;
+        return self.listGeometry(s).hitRow(
+            s.pointer_inside,
+            s.pointer_x,
+            s.pointer_y,
+            self.scroll,
+            list.len,
+            s.metrics,
+        );
     }
 
     fn updateHover(self: *Bluetooth, s: *session.Session) void {
@@ -633,7 +597,7 @@ pub const Bluetooth = struct {
         const m = s.metrics;
         const cfg = s.cfg;
         const width: i32 = @intCast(s.client.logical_width);
-        const header_height = ui.scaled(base_header_height, m.scale);
+        const header_height = ui.scaled(ui.base_header_height, m.scale);
         const title_y = ui.px(m.margin, output_scale) +
             @divTrunc(ui.px(header_height, output_scale) - text_height, 2);
         const title_end = canvas.text(
@@ -660,26 +624,16 @@ pub const Bluetooth = struct {
         else
             cfg.accent;
         const small_margin_px = ui.px(m.small_margin, output_scale);
-        const badge_width = font.textWidth(badge_text, font_scale) + small_margin_px * 2;
-        const badge_height = text_height + small_margin_px;
-        const badge_x = ui.px(width - m.margin, output_scale) - badge_width;
-        const badge_y = ui.px(m.margin, output_scale) +
-            @divTrunc(ui.px(header_height, output_scale) - badge_height, 2);
-
-        canvas.roundRect(
-            badge_x,
-            badge_y,
-            badge_width,
-            badge_height,
-            ui.px(m.row_radius, output_scale),
-            cfg.highlight_low,
-        );
-        _ = canvas.text(
-            badge_x + small_margin_px,
-            badge_y + @divTrunc(badge_height - text_height, 2),
+        const badge_x = ui.drawBadge(
+            canvas,
+            cfg,
+            m,
+            output_scale,
+            width,
+            font_scale,
+            text_height,
             badge_text,
             badge_color,
-            font_scale,
         );
 
         if (active_adapter) |value| {
@@ -704,7 +658,7 @@ pub const Bluetooth = struct {
         self: *Bluetooth,
         s: *session.Session,
         canvas: *render.Canvas,
-        geometry: ListGeometry,
+        geometry: ui.ListLayout,
         output_scale: i32,
         font_scale: f32,
         text_height: i32,
@@ -765,7 +719,7 @@ pub const Bluetooth = struct {
                 cfg.highlight_low,
             );
 
-            const initial = appInitial(device.label());
+            const initial = ui.appInitial(device.label());
             const initial_width = font.textWidth(initial, font_scale);
             _ = canvas.text(
                 icon_x + @divTrunc(icon_px - initial_width, 2),
@@ -819,7 +773,7 @@ pub const Bluetooth = struct {
                 device.rssi != null;
             var value_buffer: [8]u8 = undefined;
             const value_text = if (has_value)
-                percentLabel(&value_buffer, percent)
+                ui.percentLabel(&value_buffer, percent)
             else
                 "  --";
             const value_width = font.textWidth(value_text, metric_scale);
@@ -852,8 +806,9 @@ pub const Bluetooth = struct {
                 font_scale,
             );
 
-            drawDeviceMetric(
+            ui.drawMeter(
                 canvas,
+                cfg,
                 metrics_x,
                 secondary_y,
                 icon_size,
@@ -867,7 +822,6 @@ pub const Bluetooth = struct {
                 if (connected) "B" else "S",
                 value_text,
                 percent,
-                cfg,
             );
         }
     }
@@ -876,44 +830,25 @@ pub const Bluetooth = struct {
         self: *Bluetooth,
         s: *session.Session,
         canvas: *render.Canvas,
-        geometry: ListGeometry,
+        geometry: ui.ListLayout,
         output_scale: i32,
         font_scale: f32,
         text_height: i32,
     ) void {
         const m = s.metrics;
         const cfg = s.cfg;
-        const x = geometry.x + m.small_margin;
-        const y = geometry.y + m.gap;
-        const width = ui.px(@max(0, geometry.w - m.small_margin * 2), output_scale);
-
-        _ = canvas.text(
-            ui.px(x, output_scale),
-            ui.px(y, output_scale),
-            "Bluetooth backend unavailable",
-            cfg.warm_2,
-            font_scale,
-        );
-
-        const body_scale = font_scale * 0.85;
-        const body_height = ui.textHeight(body_scale);
-        const line_height = body_height + ui.px(m.small_margin, output_scale);
-        const next = ui.drawWrapped(
+        ui.drawError(
             canvas,
-            ui.px(x, output_scale),
-            ui.px(y, output_scale) + text_height + ui.px(m.small_margin, output_scale),
-            width,
-            line_height,
-            self.errorSlice(),
-            cfg.warm_2,
-            body_scale,
-        );
-        _ = canvas.text(
-            ui.px(x, output_scale),
-            next + ui.px(m.small_margin, output_scale),
-            "Press R to retry, or Esc to close.",
-            cfg.muted,
-            body_scale,
+            cfg,
+            m,
+            geometry.x + m.small_margin,
+            geometry.y + m.gap,
+            @max(0, geometry.w - m.small_margin * 2),
+            output_scale,
+            font_scale,
+            text_height,
+            "Bluetooth backend unavailable",
+            self.notice.text(),
         );
     }
 
@@ -924,115 +859,22 @@ pub const Bluetooth = struct {
         output_scale: i32,
         font_scale: f32,
     ) void {
-        const m = s.metrics;
-        const cfg = s.cfg;
-        const hint_scale = font_scale * 0.8;
-        const hint_height = ui.textHeight(hint_scale);
-        const y = ui.px(@intCast(s.client.logical_height), output_scale) -
-            ui.px(m.margin, output_scale) - hint_height;
-        const width = ui.px(@max(0, @as(i32, @intCast(s.client.logical_width)) - m.margin * 2), output_scale);
-        const text = if (self.error_len > 0)
-            self.errorSlice()
-        else
-            "Up/Down  Enter toggle  P power  D discover  A pair  Del forget  R refresh  Esc";
-
-        _ = canvas.textFit(
-            ui.px(m.margin, output_scale),
-            y,
-            text,
-            if (self.error_len > 0) cfg.warm_2 else cfg.muted,
-            hint_scale,
-            width,
+        ui.drawFooter(
+            canvas,
+            s.cfg,
+            s.metrics,
+            @intCast(s.client.logical_width),
+            @intCast(s.client.logical_height),
+            output_scale,
+            font_scale,
+            self.notice.text(),
+            "Up/Down  Enter toggle  P power  D discover  A pair  Del forget  R refresh  Esc",
         );
     }
-};
-
-const ListGeometry = struct {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
 };
 
 fn rssiPercent(rssi: ?i16) u8 {
     const value = rssi orelse return 0;
     const clamped: i32 = std.math.clamp(@as(i32, value), -100, -30);
     return @intCast(@divTrunc((clamped + 100) * 100, 70));
-}
-
-fn percentLabel(buffer: []u8, percent: u8) []const u8 {
-    return std.fmt.bufPrint(buffer, "{d:>3}%", .{percent}) catch "???%";
-}
-
-fn drawDeviceMetric(
-    canvas: *render.Canvas,
-    x: i32,
-    y: i32,
-    icon_size: i32,
-    glyph_scale: f32,
-    text_height: i32,
-    bar_width: i32,
-    bar_height: i32,
-    gap: i32,
-    icon: ?png.Image,
-    icon_tint: render.Color,
-    fallback: []const u8,
-    value: []const u8,
-    percent: u8,
-    cfg: config.Config,
-) void {
-    const icon_y = y + @divTrunc(text_height - icon_size, 2);
-    if (icon) |image| {
-        canvas.imageTinted(x, icon_y, icon_size, icon_size, &image, icon_tint);
-    } else {
-        const fallback_width = font.textWidth(fallback, glyph_scale);
-        _ = canvas.text(
-            x + @divTrunc(icon_size - fallback_width, 2),
-            y,
-            fallback,
-            icon_tint,
-            glyph_scale,
-        );
-    }
-
-    const bar_x = x + icon_size + gap;
-    const bar_y = y + @divTrunc(text_height - bar_height, 2);
-    canvas.roundRect(
-        bar_x,
-        bar_y,
-        bar_width,
-        bar_height,
-        @divTrunc(bar_height, 2),
-        cfg.highlight_low,
-    );
-
-    const filled = @divTrunc(bar_width * @as(i32, percent), 100);
-    if (filled > 0) {
-        canvas.roundRectGradient(
-            bar_x,
-            bar_y,
-            bar_width,
-            bar_height,
-            @divTrunc(bar_height, 2),
-            filled,
-            &.{ cfg.warm_2, cfg.warm_1, cfg.accent },
-        );
-    }
-
-    _ = canvas.text(
-        bar_x + bar_width + gap,
-        y,
-        value,
-        cfg.detail_2,
-        glyph_scale,
-    );
-}
-
-fn appInitial(name: []const u8) []const u8 {
-    if (name.len == 0) return "?";
-    const len = std.unicode.utf8ByteSequenceLength(name[0]) catch return "?";
-    if (len > name.len) return "?";
-    const codepoint = std.unicode.utf8Decode(name[0..len]) catch return "?";
-    if (font.glyph(codepoint) == null) return "?";
-    return name[0..len];
 }

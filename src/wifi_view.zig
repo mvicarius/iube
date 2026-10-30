@@ -11,8 +11,6 @@ const session = @import("session.zig");
 const wifi = @import("wifi.zig");
 const worker_mod = @import("wifi_worker.zig");
 
-const base_header_height = 36;
-const base_footer_height = 24;
 const refresh_ms = 5000;
 
 pub const Wifi = struct {
@@ -45,9 +43,7 @@ pub const Wifi = struct {
     password_device_len: usize = 0,
     password_error: bool = false,
 
-    error_buffer: [256]u8 = undefined,
-    error_len: usize = 0,
-    error_deadline_ms: i64 = 0,
+    notice: ui.Notice = .{},
 
     pub fn init(io: std.Io, gpa: std.mem.Allocator) Wifi {
         var view = Wifi{
@@ -89,11 +85,7 @@ pub const Wifi = struct {
             }
         }
 
-        if (self.error_len > 0 and self.error_deadline_ms > 0 and s.nowMs() >= self.error_deadline_ms) {
-            self.error_len = 0;
-            self.error_deadline_ms = 0;
-            s.dirty = true;
-        }
+        if (self.notice.expire(s.nowMs())) s.dirty = true;
 
         if (self.password_modal) return;
         if (self.worker == null or self.pending_action != null or self.refresh_pending) return;
@@ -140,8 +132,7 @@ pub const Wifi = struct {
                 } else if (result.error_value != null) {
                     self.setNotice("Action succeeded, but refresh failed");
                 } else {
-                    self.error_len = 0;
-                    self.error_deadline_ms = 0;
+                    self.notice.clear();
                 }
             },
         }
@@ -149,8 +140,7 @@ pub const Wifi = struct {
     }
 
     fn reload(self: *Wifi) void {
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         self.pending_action = null;
         self.pending_ssid_len = 0;
         self.refresh_pending = false;
@@ -338,7 +328,7 @@ pub const Wifi = struct {
         const m = s.metrics;
         const cfg = s.cfg;
         const width: i32 = @intCast(s.client.logical_width);
-        const header_height = ui.scaled(base_header_height, m.scale);
+        const header_height = ui.scaled(ui.base_header_height, m.scale);
         const title_y = ui.px(m.margin, output_scale) +
             @divTrunc(ui.px(header_height, output_scale) - text_height, 2);
         const title_end = canvas.text(
@@ -369,26 +359,16 @@ pub const Wifi = struct {
         } else cfg.muted;
 
         const small_margin_px = ui.px(m.small_margin, output_scale);
-        const badge_width = font.textWidth(badge_text, font_scale) + small_margin_px * 2;
-        const badge_height = text_height + small_margin_px;
-        const badge_x = ui.px(width - m.margin, output_scale) - badge_width;
-        const badge_y = ui.px(m.margin, output_scale) +
-            @divTrunc(ui.px(header_height, output_scale) - badge_height, 2);
-
-        canvas.roundRect(
-            badge_x,
-            badge_y,
-            badge_width,
-            badge_height,
-            ui.px(m.row_radius, output_scale),
-            cfg.highlight_low,
-        );
-        _ = canvas.text(
-            badge_x + small_margin_px,
-            badge_y + @divTrunc(badge_height - text_height, 2),
+        const badge_x = ui.drawBadge(
+            canvas,
+            cfg,
+            m,
+            output_scale,
+            width,
+            font_scale,
+            text_height,
             badge_text,
             badge_color,
-            font_scale,
         );
 
         if (state) |value| {
@@ -415,7 +395,7 @@ pub const Wifi = struct {
         self: *Wifi,
         s: *session.Session,
         canvas: *render.Canvas,
-        geometry: ListGeometry,
+        geometry: ui.ListLayout,
         output_scale: i32,
         font_scale: f32,
         text_height: i32,
@@ -525,7 +505,7 @@ pub const Wifi = struct {
             const status_x = right_edge - status_width;
 
             var value_buffer: [8]u8 = undefined;
-            const value_text = percentLabel(&value_buffer, network.strength);
+            const value_text = ui.percentLabel(&value_buffer, network.strength);
             const value_width = font.textWidth(value_text, metric_scale);
             const metrics_width = icon_size + item_gap + bar_width + item_gap + value_width;
             const metrics_x = right_edge - metrics_width;
@@ -562,8 +542,9 @@ pub const Wifi = struct {
                 font_scale,
             );
 
-            drawSignalMetric(
+            ui.drawMeter(
                 canvas,
+                cfg,
                 metrics_x,
                 secondary_y,
                 icon_size,
@@ -573,7 +554,8 @@ pub const Wifi = struct {
                 bar_height,
                 item_gap,
                 self.signal_icon,
-                cfg,
+                cfg.accent,
+                "",
                 value_text,
                 network.strength,
             );
@@ -691,44 +673,24 @@ pub const Wifi = struct {
         self: *Wifi,
         s: *session.Session,
         canvas: *render.Canvas,
-        geometry: ListGeometry,
+        geometry: ui.ListLayout,
         output_scale: i32,
         font_scale: f32,
         text_height: i32,
     ) void {
         const m = s.metrics;
-        const cfg = s.cfg;
-        const x = geometry.x + m.small_margin;
-        const y = geometry.y + m.gap;
-        const width = ui.px(@max(0, geometry.w - m.small_margin * 2), output_scale);
-
-        _ = canvas.text(
-            ui.px(x, output_scale),
-            ui.px(y, output_scale),
-            "Wi-Fi backend unavailable",
-            cfg.warm_2,
-            font_scale,
-        );
-
-        const body_scale = font_scale * 0.85;
-        const body_height = ui.textHeight(body_scale);
-        const line_height = body_height + ui.px(m.small_margin, output_scale);
-        const next = ui.drawWrapped(
+        ui.drawError(
             canvas,
-            ui.px(x, output_scale),
-            ui.px(y, output_scale) + text_height + ui.px(m.small_margin, output_scale),
-            width,
-            line_height,
-            self.errorSlice(),
-            cfg.warm_2,
-            body_scale,
-        );
-        _ = canvas.text(
-            ui.px(x, output_scale),
-            next + ui.px(m.small_margin, output_scale),
-            "Press R to retry, or Esc to close.",
-            cfg.muted,
-            body_scale,
+            s.cfg,
+            m,
+            geometry.x + m.small_margin,
+            geometry.y + m.gap,
+            @max(0, geometry.w - m.small_margin * 2),
+            output_scale,
+            font_scale,
+            text_height,
+            "Wi-Fi backend unavailable",
+            self.notice.text(),
         );
     }
 
@@ -739,34 +701,25 @@ pub const Wifi = struct {
         output_scale: i32,
         font_scale: f32,
     ) void {
-        const m = s.metrics;
-        const cfg = s.cfg;
-        const hint_scale = font_scale * 0.8;
-        const hint_height = ui.textHeight(hint_scale);
-        const y = ui.px(@intCast(s.client.logical_height), output_scale) -
-            ui.px(m.margin, output_scale) - hint_height;
-        const width = ui.px(@max(0, @as(i32, @intCast(s.client.logical_width)) - m.margin * 2), output_scale);
-        const text = if (self.error_len > 0)
-            self.errorSlice()
-        else
-            "Up/Down  Enter connect  X disconnect  S scan  P Wi-Fi on/off  R refresh  Esc";
-
-        _ = canvas.textFit(
-            ui.px(m.margin, output_scale),
-            y,
-            text,
-            if (self.error_len > 0) cfg.warm_2 else cfg.muted,
-            hint_scale,
-            width,
+        ui.drawFooter(
+            canvas,
+            s.cfg,
+            s.metrics,
+            @intCast(s.client.logical_width),
+            @intCast(s.client.logical_height),
+            output_scale,
+            font_scale,
+            self.notice.text(),
+            "Up/Down  Enter connect  X disconnect  S scan  P Wi-Fi on/off  R refresh  Esc",
         );
     }
 
-    fn listGeometry(_: *Wifi, s: *session.Session) ListGeometry {
+    fn listGeometry(_: *Wifi, s: *session.Session) ui.ListLayout {
         const width: i32 = @intCast(s.client.logical_width);
         const height: i32 = @intCast(s.client.logical_height);
         const m = s.metrics;
-        const header = ui.scaled(base_header_height, m.scale);
-        const footer = ui.scaled(base_footer_height, m.scale);
+        const header = ui.scaled(ui.base_header_height, m.scale);
+        const footer = ui.scaled(ui.base_footer_height, m.scale);
         const y = m.margin + header + m.gap;
         return .{
             .x = m.margin,
@@ -778,36 +731,30 @@ pub const Wifi = struct {
 
     fn maxScroll(self: *Wifi, s: *session.Session) i32 {
         const state = if (self.state) |*value| value else return 0;
-        const geometry = self.listGeometry(s);
-        const content = @as(i32, @intCast(state.networks.len)) * s.metrics.row_step - s.metrics.gap;
-        return @max(0, content - geometry.h);
+        return self.listGeometry(s).maxScroll(state.networks.len, s.metrics, s.metrics.gap);
     }
 
     fn ensureSelectionVisible(self: *Wifi, s: *session.Session) void {
-        const geometry = self.listGeometry(s);
-        const top = @as(i32, @intCast(self.selected)) * s.metrics.row_step;
-        const bottom = top + s.metrics.row_height;
-        if (top < self.scroll) self.scroll = top;
-        if (bottom > self.scroll + geometry.h) self.scroll = bottom - geometry.h;
-        self.scroll = std.math.clamp(self.scroll, 0, self.maxScroll(s));
+        const state = if (self.state) |*value| value else return;
+        self.listGeometry(s).ensureSelectionVisible(
+            self.selected,
+            &self.scroll,
+            s.metrics,
+            state.networks.len,
+            s.metrics.gap,
+        );
     }
 
     fn hitRow(self: *Wifi, s: *session.Session) ?usize {
-        if (!s.pointer_inside) return null;
         const state = if (self.state) |*value| value else return null;
-
-        const geometry = self.listGeometry(s);
-        const fx: i32 = @intFromFloat(@floor(s.pointer_x));
-        const fy: i32 = @intFromFloat(@floor(s.pointer_y));
-        if (fx < geometry.x or fx >= geometry.x + geometry.w) return null;
-        if (fy < geometry.y or fy >= geometry.y + geometry.h) return null;
-
-        const local = fy - geometry.y + self.scroll;
-        if (local < 0) return null;
-        const index: usize = @intCast(@divTrunc(local, s.metrics.row_step));
-        if (index >= state.networks.len) return null;
-        if (@mod(local, s.metrics.row_step) >= s.metrics.row_height) return null;
-        return index;
+        return self.listGeometry(s).hitRow(
+            s.pointer_inside,
+            s.pointer_x,
+            s.pointer_y,
+            self.scroll,
+            state.networks.len,
+            s.metrics,
+        );
     }
 
     fn updateHover(self: *Wifi, s: *session.Session) void {
@@ -880,6 +827,11 @@ pub const Wifi = struct {
             s.dirty = true;
             return;
         }
+        if (network.ssid.len == 0) {
+            self.setNotice("Hidden networks are not supported");
+            s.dirty = true;
+            return;
+        }
         const device = state.device orelse {
             self.setNotice("No Wi-Fi device");
             s.dirty = true;
@@ -949,10 +901,6 @@ pub const Wifi = struct {
     ) void {
         if (key.keysym == ui.key_return or key.keysym == ui.key_kp_enter) {
             if (!is_repeat) self.submitPassword(s);
-            return;
-        }
-        if (key.keysym == 'n' or key.keysym == 'N') {
-            if (!is_repeat) self.closePasswordModal(s);
             return;
         }
         if (key.keysym == ui.key_backspace) {
@@ -1055,6 +1003,11 @@ pub const Wifi = struct {
             s.dirty = true;
             return false;
         }
+        if (ssid.len == 0) {
+            self.setNotice("Hidden networks are not supported");
+            s.dirty = true;
+            return false;
+        }
         if (device_path.len > 256 or ap_path.len > 256 or ssid.len > 128 or
             password.len > 128)
         {
@@ -1075,9 +1028,9 @@ pub const Wifi = struct {
         @memcpy(job.ap_path[0..ap_path.len], ap_path);
         @memcpy(job.ssid[0..ssid.len], ssid);
         @memcpy(job.password[0..password.len], password);
+        defer job.clearSecret();
 
         self.worker.?.submit(job) catch |err| {
-            job.clearSecret();
             self.setError("Wi-Fi action failed", err);
             s.dirty = true;
             return false;
@@ -1086,8 +1039,7 @@ pub const Wifi = struct {
         self.pending_action = .connect_new;
         self.pending_ssid_len = ssid.len;
         @memcpy(self.pending_ssid[0..ssid.len], ssid);
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         s.dirty = true;
         return true;
     }
@@ -1138,8 +1090,7 @@ pub const Wifi = struct {
         self.pending_action = kind;
         self.pending_ssid_len = ssid.len;
         @memcpy(self.pending_ssid[0..ssid.len], ssid);
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         s.dirty = true;
     }
 
@@ -1148,97 +1099,14 @@ pub const Wifi = struct {
     }
 
     fn setError(self: *Wifi, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Wi-Fi error";
-        self.error_len = text.len;
-        self.error_deadline_ms = self.nowMs() + 5000;
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 5000);
     }
 
     fn setFatalError(self: *Wifi, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Wi-Fi error";
-        self.error_len = text.len;
-        self.error_deadline_ms = 0;
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 0);
     }
 
     fn setNotice(self: *Wifi, text: []const u8) void {
-        const length = @min(text.len, self.error_buffer.len);
-        @memcpy(self.error_buffer[0..length], text[0..length]);
-        self.error_len = length;
-        self.error_deadline_ms = self.nowMs() + 5000;
-    }
-
-    fn errorSlice(self: *const Wifi) []const u8 {
-        return self.error_buffer[0..self.error_len];
+        self.notice.set(text, self.nowMs(), 5000);
     }
 };
-
-const ListGeometry = struct {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-};
-
-fn percentLabel(buffer: []u8, percent: u8) []const u8 {
-    return std.fmt.bufPrint(buffer, "{d:>3}%", .{percent}) catch "???%";
-}
-
-fn drawSignalMetric(
-    canvas: *render.Canvas,
-    x: i32,
-    y: i32,
-    icon_size: i32,
-    glyph_scale: f32,
-    text_height: i32,
-    bar_width: i32,
-    bar_height: i32,
-    gap: i32,
-    icon: ?png.Image,
-    cfg: config.Config,
-    value: []const u8,
-    percent: u8,
-) void {
-    const icon_y = y + @divTrunc(text_height - icon_size, 2);
-    if (icon) |image| {
-        canvas.imageTinted(x, icon_y, icon_size, icon_size, &image, cfg.accent);
-    }
-
-    const bar_x = x + icon_size + gap;
-    const bar_y = y + @divTrunc(text_height - bar_height, 2);
-    canvas.roundRect(
-        bar_x,
-        bar_y,
-        bar_width,
-        bar_height,
-        @divTrunc(bar_height, 2),
-        cfg.highlight_low,
-    );
-
-    const filled = @divTrunc(bar_width * @as(i32, percent), 100);
-    if (filled > 0) {
-        canvas.roundRectGradient(
-            bar_x,
-            bar_y,
-            bar_width,
-            bar_height,
-            @divTrunc(bar_height, 2),
-            filled,
-            &.{ cfg.warm_2, cfg.warm_1, cfg.accent },
-        );
-    }
-
-    _ = canvas.text(
-        bar_x + bar_width + gap,
-        y,
-        value,
-        cfg.detail_2,
-        glyph_scale,
-    );
-}

@@ -14,8 +14,6 @@ const ui = @import("ui.zig");
 const session = @import("session.zig");
 const brightness = @import("brightness.zig");
 
-const base_header_height = 36;
-const base_footer_height = 24;
 const base_summary_height = 64;
 const max_visible_rows = 4;
 const step = 5;
@@ -39,9 +37,7 @@ pub const Brightness = struct {
     hover: ?usize = null,
     scroll: i32 = 0,
 
-    error_buffer: [256]u8 = undefined,
-    error_len: usize = 0,
-    error_deadline_ms: i64 = 0,
+    notice: ui.Notice = .{},
 
     session_buffer: [256]u8 = undefined,
     session_len: usize = 0,
@@ -67,9 +63,9 @@ pub const Brightness = struct {
 
     pub fn windowSize(self: *Brightness, metrics: ui.Metrics) ui.WindowSize {
         const m = metrics;
-        const header = ui.scaled(base_header_height, m.scale);
+        const header = ui.scaled(ui.base_header_height, m.scale);
         const summary = ui.scaled(base_summary_height, m.scale);
-        const footer = ui.scaled(base_footer_height, m.scale);
+        const footer = ui.scaled(ui.base_footer_height, m.scale);
         const rows: i32 = @intCast(self.rowCount());
         const content = rows * m.row_step - m.gap;
         return .{
@@ -86,11 +82,7 @@ pub const Brightness = struct {
     }
 
     pub fn tick(self: *Brightness, s: *session.Session) void {
-        if (self.error_len == 0 or self.error_deadline_ms == 0) return;
-        if (s.nowMs() < self.error_deadline_ms) return;
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
-        s.dirty = true;
+        if (self.notice.expire(s.nowMs())) s.dirty = true;
     }
 
     pub fn overTextField(_: *Brightness, _: *session.Session) bool {
@@ -172,8 +164,7 @@ pub const Brightness = struct {
     }
 
     fn reload(self: *Brightness) void {
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         self.session_len = 0;
 
         if (self.client) |*client| client.deinit();
@@ -251,8 +242,7 @@ pub const Brightness = struct {
         };
 
         device.brightness = value;
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
         s.dirty = true;
     }
 
@@ -267,13 +257,13 @@ pub const Brightness = struct {
         const m = s.metrics;
         return .{
             .x = m.margin,
-            .y = m.margin + ui.scaled(base_header_height, m.scale) + m.gap,
+            .y = m.margin + ui.scaled(ui.base_header_height, m.scale) + m.gap,
             .w = @max(0, width - m.margin * 2),
             .h = ui.scaled(base_summary_height, m.scale),
         };
     }
 
-    fn listGeometry(self: *Brightness, s: *session.Session) Rect {
+    fn listGeometry(self: *Brightness, s: *session.Session) ui.ListLayout {
         const summary = self.summaryGeometry(s);
         const m = s.metrics;
         const rows: i32 = @intCast(self.rowCount());
@@ -287,36 +277,30 @@ pub const Brightness = struct {
 
     fn maxScroll(self: *Brightness, s: *session.Session) i32 {
         const state = if (self.state) |*value| value else return 0;
-        const geometry = self.listGeometry(s);
-        const content = @as(i32, @intCast(state.devices.len)) * s.metrics.row_step - s.metrics.gap;
-        return @max(0, content - geometry.h);
+        return self.listGeometry(s).maxScroll(state.devices.len, s.metrics, s.metrics.gap);
     }
 
     fn ensureSelectionVisible(self: *Brightness, s: *session.Session) void {
-        const geometry = self.listGeometry(s);
-        const top = @as(i32, @intCast(self.selected)) * s.metrics.row_step;
-        const bottom = top + s.metrics.row_height;
-        if (top < self.scroll) self.scroll = top;
-        if (bottom > self.scroll + geometry.h) self.scroll = bottom - geometry.h;
-        self.scroll = std.math.clamp(self.scroll, 0, self.maxScroll(s));
+        const state = if (self.state) |*value| value else return;
+        self.listGeometry(s).ensureSelectionVisible(
+            self.selected,
+            &self.scroll,
+            s.metrics,
+            state.devices.len,
+            s.metrics.gap,
+        );
     }
 
     fn hitRow(self: *Brightness, s: *session.Session) ?usize {
-        if (!s.pointer_inside) return null;
         const state = if (self.state) |*value| value else return null;
-
-        const geometry = self.listGeometry(s);
-        const fx: i32 = @intFromFloat(@floor(s.pointer_x));
-        const fy: i32 = @intFromFloat(@floor(s.pointer_y));
-        if (fx < geometry.x or fx >= geometry.x + geometry.w) return null;
-        if (fy < geometry.y or fy >= geometry.y + geometry.h) return null;
-
-        const local = fy - geometry.y + self.scroll;
-        if (local < 0) return null;
-        const index: usize = @intCast(@divTrunc(local, s.metrics.row_step));
-        if (index >= state.devices.len) return null;
-        if (@mod(local, s.metrics.row_step) >= s.metrics.row_height) return null;
-        return index;
+        return self.listGeometry(s).hitRow(
+            s.pointer_inside,
+            s.pointer_x,
+            s.pointer_y,
+            self.scroll,
+            state.devices.len,
+            s.metrics,
+        );
     }
 
     fn updateHover(self: *Brightness, s: *session.Session) void {
@@ -338,7 +322,7 @@ pub const Brightness = struct {
         const m = s.metrics;
         const cfg = s.cfg;
         const width: i32 = @intCast(s.client.logical_width);
-        const header_height = ui.scaled(base_header_height, m.scale);
+        const header_height = ui.scaled(ui.base_header_height, m.scale);
         const title_y = ui.px(m.margin, output_scale) +
             @divTrunc(ui.px(header_height, output_scale) - text_height, 2);
 
@@ -363,27 +347,16 @@ pub const Brightness = struct {
         else
             cfg.warm_1;
 
-        const small_margin_px = ui.px(m.small_margin, output_scale);
-        const badge_width = font.textWidth(badge_text, font_scale) + small_margin_px * 2;
-        const badge_height = text_height + small_margin_px;
-        const badge_x = ui.px(width - m.margin, output_scale) - badge_width;
-        const badge_y = ui.px(m.margin, output_scale) +
-            @divTrunc(ui.px(header_height, output_scale) - badge_height, 2);
-
-        canvas.roundRect(
-            badge_x,
-            badge_y,
-            badge_width,
-            badge_height,
-            ui.px(m.row_radius, output_scale),
-            cfg.highlight_low,
-        );
-        _ = canvas.text(
-            badge_x + small_margin_px,
-            badge_y + @divTrunc(badge_height - text_height, 2),
+        _ = ui.drawBadge(
+            canvas,
+            cfg,
+            m,
+            output_scale,
+            width,
+            font_scale,
+            text_height,
             badge_text,
             badge_color,
-            font_scale,
         );
     }
 
@@ -654,38 +627,19 @@ pub const Brightness = struct {
         text_height: i32,
     ) void {
         const m = s.metrics;
-        const cfg = s.cfg;
         const width: i32 = @intCast(s.client.logical_width);
-        const x = ui.px(m.margin, output_scale);
-        const y = ui.px(m.margin + ui.scaled(base_header_height, m.scale) + m.gap, output_scale);
-
-        _ = canvas.text(
-            x,
-            y,
-            "Brightness unavailable",
-            cfg.warm_2,
-            font_scale,
-        );
-
-        const body_scale = font_scale * 0.85;
-        const body_height = ui.textHeight(body_scale);
-        const line_height = body_height + ui.px(m.small_margin, output_scale);
-        const next = ui.drawWrapped(
+        ui.drawError(
             canvas,
-            x,
-            y + text_height + ui.px(m.small_margin, output_scale),
-            ui.px(@max(0, width - m.margin * 2), output_scale),
-            line_height,
-            self.errorSlice(),
-            cfg.warm_2,
-            body_scale,
-        );
-        _ = canvas.text(
-            x,
-            next + ui.px(m.small_margin, output_scale),
-            "Press R to retry, or Esc to close.",
-            cfg.muted,
-            body_scale,
+            s.cfg,
+            m,
+            m.margin,
+            m.margin + ui.scaled(ui.base_header_height, m.scale) + m.gap,
+            @max(0, width - m.margin * 2),
+            output_scale,
+            font_scale,
+            text_height,
+            "Brightness unavailable",
+            self.notice.text(),
         );
     }
 
@@ -696,27 +650,19 @@ pub const Brightness = struct {
         output_scale: i32,
         font_scale: f32,
     ) void {
-        const m = s.metrics;
-        const cfg = s.cfg;
-        const hint_scale = font_scale * 0.8;
-        const hint_height = ui.textHeight(hint_scale);
-        const y = ui.px(@intCast(s.client.logical_height), output_scale) -
-            ui.px(m.margin, output_scale) - hint_height;
-        const width = ui.px(@max(0, @as(i32, @intCast(s.client.logical_width)) - m.margin * 2), output_scale);
-        const text = if (self.error_len > 0)
-            self.errorSlice()
-        else if (self.session_len > 0)
-            self.sessionNote()
-        else
-            "Up/Down select  Left/Right brightness  R refresh  Esc";
-
-        _ = canvas.textFit(
-            ui.px(m.margin, output_scale),
-            y,
-            text,
-            if (self.error_len > 0) cfg.warm_2 else cfg.muted,
-            hint_scale,
-            width,
+        ui.drawFooter(
+            canvas,
+            s.cfg,
+            s.metrics,
+            @intCast(s.client.logical_width),
+            @intCast(s.client.logical_height),
+            output_scale,
+            font_scale,
+            if (self.notice.has()) self.notice.text() else "",
+            if (self.session_len > 0)
+                self.sessionNote()
+            else
+                "Up/Down select  Left/Right brightness  R refresh  Esc",
         );
     }
 
@@ -725,23 +671,11 @@ pub const Brightness = struct {
     }
 
     fn setError(self: *Brightness, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, brightness.describe(err) },
-        ) catch prefix;
-        self.error_len = text.len;
-        self.error_deadline_ms = self.nowMs() + 5000;
+        self.notice.setDetail(prefix, brightness.describe(err), self.nowMs(), 5000);
     }
 
     fn setFatalError(self: *Brightness, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, brightness.describe(err) },
-        ) catch prefix;
-        self.error_len = text.len;
-        self.error_deadline_ms = 0;
+        self.notice.setDetail(prefix, brightness.describe(err), self.nowMs(), 0);
     }
 
     fn setSessionNote(self: *Brightness, err: anyerror) void {
@@ -755,9 +689,5 @@ pub const Brightness = struct {
 
     fn sessionNote(self: *const Brightness) []const u8 {
         return self.session_buffer[0..self.session_len];
-    }
-
-    fn errorSlice(self: *const Brightness) []const u8 {
-        return self.error_buffer[0..self.error_len];
     }
 };

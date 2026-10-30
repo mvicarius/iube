@@ -339,7 +339,7 @@ fn parseManagedObjects(gpa: std.mem.Allocator, body: []const u8) !State {
                 reader.index = properties_end;
             }
         }
-        try finishArray(&reader, interfaces_end);
+        try reader.finishArray(interfaces_end);
 
         if (adapter) |value| try adapters.append(alloc, value);
         if (device) |value| {
@@ -348,7 +348,7 @@ fn parseManagedObjects(gpa: std.mem.Allocator, body: []const u8) !State {
             try devices.append(alloc, completed);
         }
     }
-    try finishArray(&reader, outer_end);
+    try reader.finishArray(outer_end);
 
     const adapter_slice = try adapters.toOwnedSlice(alloc);
     const device_slice = try devices.toOwnedSlice(alloc);
@@ -396,7 +396,7 @@ fn parseAdapterProperties(reader: *dbus.Reader, alloc: std.mem.Allocator, adapte
             try reader.skipValue(signature);
         }
     }
-    try finishArray(reader, end);
+    try reader.finishArray(end);
 }
 
 fn parseDeviceProperties(reader: *dbus.Reader, alloc: std.mem.Allocator, device: *Device) !void {
@@ -431,7 +431,7 @@ fn parseDeviceProperties(reader: *dbus.Reader, alloc: std.mem.Allocator, device:
             try reader.skipValue(signature);
         }
     }
-    try finishArray(reader, end);
+    try reader.finishArray(end);
 }
 
 fn parseBatteryProperties(reader: *dbus.Reader) !?u8 {
@@ -448,7 +448,7 @@ fn parseBatteryProperties(reader: *dbus.Reader) !?u8 {
             try reader.skipValue(signature);
         }
     }
-    try finishArray(reader, end);
+    try reader.finishArray(end);
     return percentage;
 }
 
@@ -463,12 +463,6 @@ fn deviceLessThan(_: void, a: Device, b: Device) bool {
     const rank_b = deviceRank(b);
     if (rank_a != rank_b) return rank_a < rank_b;
     return std.ascii.lessThanIgnoreCase(a.label(), b.label());
-}
-
-fn finishArray(reader: *dbus.Reader, end: usize) !void {
-    if (reader.index > end) return error.Protocol;
-    if (end - reader.index >= 8) return error.Protocol;
-    reader.index = end;
 }
 
 test "devices sort connected then paired then new" {

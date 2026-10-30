@@ -1,22 +1,15 @@
 //! Registry of the tools exposed by the iube control panel.
 //!
 //! The panel is deliberately data-driven: adding a tool here makes it appear in
-//! `iube` and gives `iube <id>` a place to dispatch to. Tools whose backend has
-//! not landed yet are marked `coming_soon` and open a placeholder view.
+//! `iube`; every entry needs a matching view branch in `main.zig`.
 
 const std = @import("std");
-
-pub const Status = enum {
-    available,
-    coming_soon,
-};
 
 pub const Tool = struct {
     /// Command-line name: `iube <id>`.
     id: []const u8,
     name: []const u8,
     description: []const u8,
-    status: Status,
     /// Short note about the system interface the real implementation will use.
     backend: []const u8,
     /// Embedded PNG, tinted with the panel's icon gradient at runtime.
@@ -28,7 +21,6 @@ pub const all = [_]Tool{
         .id = "launch",
         .name = "Application Launcher",
         .description = "Search and open .desktop applications.",
-        .status = .available,
         .backend = ".desktop entries, with the shared wl_shm renderer.",
         .icon = @embedFile("icons/rocket.png"),
     },
@@ -36,7 +28,6 @@ pub const all = [_]Tool{
         .id = "audio",
         .name = "Audio",
         .description = "Output volume, input level and default devices.",
-        .status = .available,
         .backend = "PulseAudio native protocol over the user socket.",
         .icon = @embedFile("icons/volume-high.png"),
     },
@@ -44,7 +35,6 @@ pub const all = [_]Tool{
         .id = "bluetooth",
         .name = "Bluetooth",
         .description = "Adapter power, discovery and connected devices.",
-        .status = .available,
         .backend = "BlueZ over the system D-Bus.",
         .icon = @embedFile("icons/bluetooth.png"),
     },
@@ -52,7 +42,6 @@ pub const all = [_]Tool{
         .id = "wifi",
         .name = "Wi-Fi",
         .description = "Scan, connect and inspect wireless networks.",
-        .status = .available,
         .backend = "NetworkManager over the system D-Bus.",
         .icon = @embedFile("icons/wifi.png"),
     },
@@ -60,7 +49,6 @@ pub const all = [_]Tool{
         .id = "power",
         .name = "Power",
         .description = "Battery, power profiles, suspend and session actions.",
-        .status = .available,
         .backend = "sysfs power_supply/platform_profile and logind over D-Bus.",
         .icon = @embedFile("icons/power-off.png"),
     },
@@ -68,7 +56,6 @@ pub const all = [_]Tool{
         .id = "brightness",
         .name = "Brightness",
         .description = "Backlight level and device selection.",
-        .status = .available,
         .backend = "sysfs /sys/class/backlight and logind SetBrightness over D-Bus.",
         .icon = @embedFile("icons/sun.png"),
     },
@@ -92,7 +79,7 @@ test "tool ids are unique and non-empty" {
 
 test "find returns the registry entry" {
     const launch = find("launch") orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(Status.available, launch.status);
+    try std.testing.expectEqualStrings("launch", launch.id);
 
     const audio = find("audio") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("Audio", audio.name);

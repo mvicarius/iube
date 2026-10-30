@@ -182,11 +182,75 @@ pub const ProfileBackend = enum {
     ppd,
 };
 
+pub const Profile = enum {
+    low_power,
+    power_saver,
+    balanced,
+    performance,
+
+    pub fn name(self: Profile) []const u8 {
+        return switch (self) {
+            .low_power => "low-power",
+            .power_saver => "power-saver",
+            .balanced => "balanced",
+            .performance => "performance",
+        };
+    }
+
+    pub fn parse(text: []const u8) ?Profile {
+        if (std.mem.eql(u8, text, "low-power")) return .low_power;
+        if (std.mem.eql(u8, text, "power-saver")) return .power_saver;
+        if (std.mem.eql(u8, text, "balanced")) return .balanced;
+        if (std.mem.eql(u8, text, "performance")) return .performance;
+        return null;
+    }
+};
+
+/// ACPI uses `low-power`, power-profiles-daemon uses `power-saver`. Accept
+/// either spelling and report the name actually advertised by the backend.
+pub fn resolveProfileName(choices: []const []const u8, requested: Profile) ?[]const u8 {
+    const primary = requested.name();
+    for (choices) |choice| {
+        if (std.mem.eql(u8, choice, primary)) return choice;
+    }
+    if (requested == .low_power) {
+        for (choices) |choice| {
+            if (std.mem.eql(u8, choice, "power-saver")) return choice;
+        }
+    } else if (requested == .power_saver) {
+        for (choices) |choice| {
+            if (std.mem.eql(u8, choice, "low-power")) return choice;
+        }
+    }
+    return null;
+}
+
 pub const ProfileState = struct {
     choices: []const []const u8,
     active: []const u8,
     backend: ProfileBackend,
+
+    /// Next advertised profile, wrapping at the end. Shared by the UI and CLI.
+    pub fn next(self: ProfileState) ?[]const u8 {
+        if (self.choices.len == 0) return null;
+        var active_index: usize = 0;
+        for (self.choices, 0..) |choice, index| {
+            if (std.mem.eql(u8, choice, self.active)) {
+                active_index = index;
+                break;
+            }
+        }
+        return self.choices[(active_index + 1) % self.choices.len];
+    }
 };
+
+pub fn profileDisplay(name: []const u8) []const u8 {
+    if (std.mem.eql(u8, name, "low-power")) return "Low power";
+    if (std.mem.eql(u8, name, "balanced")) return "Balanced";
+    if (std.mem.eql(u8, name, "performance")) return "Performance";
+    if (std.mem.eql(u8, name, "power-saver")) return "Power saver";
+    return name;
+}
 
 pub const State = struct {
     arena: std.heap.ArenaAllocator,
@@ -342,7 +406,7 @@ pub const Client = struct {
                 try reader.skipValue(signature);
             }
         }
-        try finishArray(&reader, end);
+        try reader.finishArray(end);
 
         const active_value = active orelse return null;
         if (choices.items.len == 0) return null;
@@ -516,15 +580,27 @@ fn readPpdProfiles(
                 try reader.skipValue(signature);
             }
         }
-        try finishArray(reader, dict_end);
+        try reader.finishArray(dict_end);
     }
-    try finishArray(reader, end);
+    try reader.finishArray(end);
 }
 
-fn finishArray(reader: *dbus.Reader, end: usize) !void {
-    if (reader.index > end) return error.Protocol;
-    if (end - reader.index >= 8) return error.Protocol;
-    reader.index = end;
+test "profile next wraps and display names are shared" {
+    const profile = ProfileState{
+        .choices = &[_][]const u8{ "low-power", "balanced", "performance" },
+        .active = "performance",
+        .backend = .sysfs,
+    };
+    try std.testing.expectEqualStrings("low-power", profile.next().?);
+    try std.testing.expectEqualStrings("Power saver", profileDisplay("power-saver"));
+    try std.testing.expectEqualStrings("Balanced", profileDisplay("balanced"));
+
+    const empty = ProfileState{
+        .choices = &.{},
+        .active = "",
+        .backend = .ppd,
+    };
+    try std.testing.expect(empty.next() == null);
 }
 
 test "battery status and estimate" {

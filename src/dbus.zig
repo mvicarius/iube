@@ -365,19 +365,22 @@ pub const Builder = struct {
     pub fn alignTo(self: *Builder, alignment: usize) void {
         const next = std.mem.alignForward(usize, self.len, alignment);
         if (next > self.len) {
-            @memset(self.data[self.len..next], 0);
-            self.len = next;
+            @memset(self.data[self.len..@min(next, self.data.len)], 0);
+            self.len = @min(next, self.data.len);
         }
     }
 
+    /// Best-effort append. The fixed buffer is sized for every message iube
+    /// sends; if a server-supplied value is unexpectedly large it is truncated
+    /// instead of writing past the buffer in release builds.
     pub fn putRaw(self: *Builder, bytes: []const u8) void {
-        std.debug.assert(self.len + bytes.len <= self.data.len);
-        @memcpy(self.data[self.len .. self.len + bytes.len], bytes);
-        self.len += bytes.len;
+        const count = @min(bytes.len, self.data.len - self.len);
+        @memcpy(self.data[self.len .. self.len + count], bytes[0..count]);
+        self.len += count;
     }
 
     pub fn putByte(self: *Builder, value: u8) void {
-        std.debug.assert(self.len < self.data.len);
+        if (self.len == self.data.len) return;
         self.data[self.len] = value;
         self.len += 1;
     }
@@ -390,14 +393,17 @@ pub const Builder = struct {
     }
 
     pub fn putString(self: *Builder, value: []const u8) void {
-        self.putU32(@intCast(value.len));
-        self.putRaw(value);
+        self.alignTo(4);
+        const count = @min(value.len, self.data.len -| self.len -| 5);
+        self.putU32(@intCast(count));
+        self.putRaw(value[0..count]);
         self.putByte(0);
     }
 
     pub fn putSignature(self: *Builder, value: []const u8) void {
-        self.putByte(@intCast(value.len));
-        self.putRaw(value);
+        const count = @min(value.len, self.data.len -| self.len -| 2);
+        self.putByte(@intCast(count));
+        self.putRaw(value[0..count]);
         self.putByte(0);
     }
 
@@ -519,6 +525,13 @@ pub const Reader = struct {
         const end = self.index + length;
         if (end > self.data.len) return error.Protocol;
         return end;
+    }
+
+    /// Move to the end of an array, allowing up to seven bytes of padding.
+    pub fn finishArray(self: *Reader, end: usize) !void {
+        if (self.index > end) return error.Protocol;
+        if (end - self.index >= 8) return error.Protocol;
+        self.index = end;
     }
 
     pub fn skipValue(self: *Reader, signature: []const u8) !void {

@@ -296,9 +296,16 @@ pub const Client = struct {
 
     fn ensureBuffers(self: *Client) !void {
         if (!self.configured) return;
-        const width = self.logical_width * self.scale;
-        const height = self.logical_height * self.scale;
-        if (width == 0 or height == 0) return;
+
+        const max_dimension = 8192;
+        const width_wide = @as(u64, self.logical_width) * self.scale;
+        const height_wide = @as(u64, self.logical_height) * self.scale;
+        if (width_wide == 0 or height_wide == 0) return;
+        if (width_wide > max_dimension or height_wide > max_dimension) {
+            return error.BufferTooLarge;
+        }
+        const width: u32 = @intCast(width_wide);
+        const height: u32 = @intCast(height_wide);
 
         if (self.buffers_valid[0] and self.buffer_width == width and self.buffer_height == height) return;
 
@@ -330,8 +337,13 @@ pub const Client = struct {
     }
 
     fn createBufferInto(self: *Client, index: usize, width: u32, height: u32) !void {
-        const stride = width * 4;
-        const size = @as(usize, stride) * height;
+        const stride_wide = @as(u64, width) * 4;
+        const size_wide = stride_wide * height;
+        if (stride_wide > std.math.maxInt(i32) or size_wide > std.math.maxInt(i32)) {
+            return error.BufferTooLarge;
+        }
+        const stride: u32 = @intCast(stride_wide);
+        const size: usize = @intCast(size_wide);
 
         const fd = try std.posix.memfd_create("iube", 0);
         defer _ = std.posix.system.close(fd);

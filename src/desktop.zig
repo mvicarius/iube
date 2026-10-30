@@ -106,8 +106,14 @@ pub fn scan(scan_io: std.Io, gpa: std.mem.Allocator, env: Env) !Apps {
     try addDataDir(scan_io, gpa, &apps, &seen_bases, "/usr/share/");
     try addDataDir(scan_io, gpa, &apps, &seen_bases, "/run/current-system/sw/share/");
 
-    if (env.xdg_data_home) |xdg_home| {
-        if (xdg_home.len > 0) try addDataDir(scan_io, gpa, &apps, &seen_bases, xdg_home);
+    // An empty or relative XDG_DATA_HOME is invalid per the XDG spec and must
+    // behave as if it were unset, so the ~/.local/share fallback still applies.
+    const data_home = if (env.xdg_data_home) |dir|
+        if (dir.len > 0 and std.fs.path.isAbsolute(dir)) dir else null
+    else
+        null;
+    if (data_home) |xdg_home| {
+        try addDataDir(scan_io, gpa, &apps, &seen_bases, xdg_home);
     } else if (env.home) |home| {
         var home_buffer: [4096]u8 = undefined;
         if (std.fmt.bufPrint(&home_buffer, "{s}/.local/share", .{home})) |local_share| {
@@ -162,11 +168,13 @@ fn addDataDir(
         if (std.mem.eql(u8, existing, normalized)) return;
     }
 
+    // The dedup list outlives this function, so its strings must live in the
+    // Apps arena, not in the per-directory arena below.
+    const owned = try apps.arena.allocator().dupe(u8, normalized);
+    try seen.append(gpa, owned);
+
     var dir_arena = std.heap.ArenaAllocator.init(gpa);
     defer dir_arena.deinit();
-
-    const owned = try dir_arena.allocator().dupe(u8, normalized);
-    try seen.append(gpa, owned);
 
     scanApps(scan_io, apps, dir_arena.allocator(), owned) catch |err| {
         std.log.warn("failed to scan {s}: {s}", .{ owned, @errorName(err) });

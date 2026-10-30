@@ -197,6 +197,8 @@ pub const Client = struct {
         network: Network,
         password: []const u8,
     ) !void {
+        if (network.ssid.len == 0) return error.HiddenNetworkUnsupported;
+
         var uuid_buffer: [36]u8 = undefined;
         const uuid = makeUuid(self.bus.io, &uuid_buffer);
 
@@ -243,7 +245,7 @@ pub const Client = struct {
 
         var reader = dbus.Reader{ .data = reply.body };
         const end = try reader.beginArray(4);
-        defer finishArray(&reader, end) catch {};
+        defer reader.finishArray(end) catch {};
 
         while (reader.index < end) {
             const path = try alloc.dupe(u8, try reader.readObjectPath());
@@ -280,7 +282,7 @@ pub const Client = struct {
         while (reader.index < end) {
             try paths.append(alloc, try alloc.dupe(u8, try reader.readObjectPath()));
         }
-        try finishArray(&reader, end);
+        try reader.finishArray(end);
         defer paths.deinit(alloc);
 
         var networks: std.ArrayList(Network) = .empty;
@@ -354,7 +356,7 @@ pub const Client = struct {
                 try reader.skipValue(signature);
             }
         }
-        try finishArray(&reader, end);
+        try reader.finishArray(end);
 
         return .{
             .ap_path = try alloc.dupe(u8, ap_path),
@@ -381,7 +383,7 @@ pub const Client = struct {
         while (reader.index < end) {
             try paths.append(alloc, try alloc.dupe(u8, try reader.readObjectPath()));
         }
-        try finishArray(&reader, end);
+        try reader.finishArray(end);
         defer paths.deinit(alloc);
 
         var saved: std.ArrayList(Saved) = .empty;
@@ -423,9 +425,9 @@ pub const Client = struct {
                     try reader.skipValue(signature);
                 }
             }
-            try finishArray(&reader, inner_end);
+            try reader.finishArray(inner_end);
         }
-        try finishArray(&reader, outer_end);
+        try reader.finishArray(outer_end);
         return ssid;
     }
 
@@ -504,7 +506,7 @@ pub const Client = struct {
 /// body. Exposed for tests; production code calls it through `addAndActivate`.
 fn putNewProfile(builder: *dbus.Builder, profile: NewProfile) void {
     const connection = [_]ProfileEntry{
-        .{ .key = "id", .value = .{ .string = if (profile.ssid.len > 0) profile.ssid else "iube" } },
+        .{ .key = "id", .value = .{ .string = profileId(profile.ssid) } },
         .{ .key = "uuid", .value = .{ .string = profile.uuid } },
         .{ .key = "type", .value = .{ .string = "802-11-wireless" } },
     };
@@ -529,6 +531,18 @@ fn putNewProfile(builder: *dbus.Builder, profile: NewProfile) void {
     }
 
     putSettings(builder, sections[0..count]);
+}
+
+/// D-Bus strings must be UTF-8 and cannot contain NUL. The SSID itself is sent
+/// as a byte array, but `connection.id` is a human-readable string, so use a
+/// safe fallback for arbitrary over-the-air SSID bytes.
+fn profileId(ssid: []const u8) []const u8 {
+    if (ssid.len == 0) return "iube";
+    if (!std.unicode.utf8ValidateSlice(ssid)) return "iube";
+    for (ssid) |byte| {
+        if (byte < 0x20 or byte == 0x7f) return "iube";
+    }
+    return ssid;
 }
 
 fn putSettings(builder: *dbus.Builder, sections: []const ProfileSection) void {
@@ -586,12 +600,6 @@ fn makeUuid(io: std.Io, buffer: *[36]u8) []const u8 {
         out += 2;
     }
     return buffer[0..36];
-}
-
-fn finishArray(reader: *dbus.Reader, end: usize) !void {
-    if (reader.index > end) return error.Protocol;
-    if (end - reader.index >= 8) return error.Protocol;
-    reader.index = end;
 }
 
 fn networkLessThan(_: void, a: Network, b: Network) bool {
@@ -674,7 +682,7 @@ fn parseProfileForTest(data: []const u8) !ParsedProfile {
                 return error.Protocol;
             }
         }
-        try finishArray(&reader, inner_end);
+        try reader.finishArray(inner_end);
 
         if (std.mem.eql(u8, section, "connection")) {
             parsed.has_connection = true;
@@ -686,7 +694,7 @@ fn parseProfileForTest(data: []const u8) !ParsedProfile {
             return error.Protocol;
         }
     }
-    try finishArray(&reader, outer_end);
+    try reader.finishArray(outer_end);
     if (reader.index != data.len) return error.Protocol;
     return parsed;
 }

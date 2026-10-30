@@ -1,11 +1,12 @@
 //! Long-lived Bluetooth worker.
 //!
 //! The UI submits jobs and polls snapshots; all BlueZ D-Bus traffic happens on
-//! this thread. The worker owns its jobs, results and D-Bus connection, so the
-//! view can drop it without joining a blocked connect call.
+//! this thread. The shared queue, reconnect and teardown logic lives in
+//! `worker.zig`; this file only maps jobs to BlueZ calls.
 
 const std = @import("std");
 const bluetooth = @import("bluetooth.zig");
+const worker = @import("worker.zig");
 
 pub const Kind = enum {
     refresh,
@@ -45,90 +46,34 @@ pub const Result = struct {
     }
 };
 
-pub const Worker = struct {
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    mutex: std.Io.Mutex = .init,
-    cond: std.Io.Condition = .init,
-    jobs: std.ArrayList(Job) = .empty,
-    results: std.ArrayList(Result) = .empty,
-    stopping: bool = false,
-    client: ?bluetooth.Client,
+const Hooks = struct {
+    pub fn connect(io: std.Io, gpa: std.mem.Allocator) !bluetooth.Client {
+        return bluetooth.Client.connect(io, gpa);
+    }
 
-    pub fn start(io: std.Io, client: bluetooth.Client) !*Worker {
-        // The worker can outlive the view. Use the process-wide libc allocator
-        // instead of the main allocator, which is deinitialized on exit.
-        const gpa = std.heap.c_allocator;
-        const worker = try gpa.create(Worker);
-        worker.* = .{
-            .io = io,
-            .gpa = gpa,
-            .client = client,
+    pub fn deinitClient(client: *bluetooth.Client) void {
+        client.deinit();
+    }
+
+    pub fn deinitResult(result: *Result) void {
+        result.deinit();
+    }
+
+    pub fn clearJob(_: *Job) void {}
+
+    pub fn isBroken(err: anyerror) bool {
+        return switch (err) {
+            error.Timeout,
+            error.ConnectionClosed,
+            error.Protocol,
+            error.BigEndianUnsupported,
+            error.MessageTooLarge,
+            => true,
+            else => false,
         };
-
-        const thread = std.Thread.spawn(.{}, run, .{worker}) catch |err| {
-            var owned = worker;
-            owned.destroy();
-            return err;
-        };
-        thread.detach();
-        return worker;
     }
 
-    /// Ask the worker to stop. The worker frees itself when it next gets
-    /// control, even if it is currently waiting for a D-Bus reply.
-    pub fn stop(self: *Worker) void {
-        self.mutex.lockUncancelable(self.io);
-        self.stopping = true;
-        self.cond.signal(self.io);
-        self.mutex.unlock(self.io);
-    }
-
-    pub fn submit(self: *Worker, job: Job) !void {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (self.stopping) return error.Stopped;
-        try self.jobs.append(self.gpa, job);
-        self.cond.signal(self.io);
-    }
-
-    pub fn poll(self: *Worker) ?Result {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (self.results.items.len == 0) return null;
-        return self.results.orderedRemove(0);
-    }
-
-    fn run(self: *Worker) void {
-        defer self.destroy();
-
-        while (true) {
-            self.mutex.lockUncancelable(self.io);
-            while (!self.stopping and self.jobs.items.len == 0) {
-                self.cond.waitUncancelable(self.io, &self.mutex);
-            }
-            if (self.stopping) {
-                self.mutex.unlock(self.io);
-                return;
-            }
-            const job = self.jobs.orderedRemove(0);
-            self.mutex.unlock(self.io);
-
-            var result = self.process(job);
-
-            self.mutex.lockUncancelable(self.io);
-            if (self.stopping) {
-                self.mutex.unlock(self.io);
-                result.deinit();
-                return;
-            }
-            self.results.append(self.gpa, result) catch result.deinit();
-            self.cond.signal(self.io);
-            self.mutex.unlock(self.io);
-        }
-    }
-
-    fn process(self: *Worker, job: Job) Result {
+    pub fn process(self: anytype, job: *const Job) Result {
         var result = Result{
             .kind = job.kind,
             .success = false,
@@ -160,7 +105,7 @@ pub const Worker = struct {
                     return result;
                 };
                 result.success = true;
-                self.refreshResult(client, &result);
+                refreshResult(self, client, &result);
             },
             .discovery => {
                 const adapter = bluetooth.Adapter{
@@ -174,7 +119,7 @@ pub const Worker = struct {
                     return result;
                 };
                 result.success = true;
-                self.refreshResult(client, &result);
+                refreshResult(self, client, &result);
             },
             .connect => {
                 const device = bluetooth.Device{
@@ -189,7 +134,7 @@ pub const Worker = struct {
                     return result;
                 };
                 result.success = true;
-                self.refreshResult(client, &result);
+                refreshResult(self, client, &result);
             },
             .pair => {
                 _ = bluetooth.pairDetached(self.io, self.gpa, job.pathSlice()) catch |err| {
@@ -197,7 +142,7 @@ pub const Worker = struct {
                     return result;
                 };
                 result.success = true;
-                self.refreshResult(client, &result);
+                refreshResult(self, client, &result);
             },
             .forget => {
                 const device = bluetooth.Device{
@@ -212,48 +157,20 @@ pub const Worker = struct {
                     return result;
                 };
                 result.success = true;
-                self.refreshResult(client, &result);
+                refreshResult(self, client, &result);
             },
         }
 
         return result;
     }
 
-    fn refreshResult(self: *Worker, client: *bluetooth.Client, result: *Result) void {
+    pub fn refreshResult(self: anytype, client: *bluetooth.Client, result: *Result) void {
         result.state = client.refresh(self.gpa) catch |err| {
             result.error_value = err;
             self.resetClientIfBroken(err);
             return;
         };
     }
-
-    fn ensureClient(self: *Worker) !*bluetooth.Client {
-        if (self.client == null) {
-            self.client = try bluetooth.Client.connect(self.io, self.gpa);
-        }
-        return &self.client.?;
-    }
-
-    fn resetClientIfBroken(self: *Worker, err: anyerror) void {
-        switch (err) {
-            error.Timeout,
-            error.ConnectionClosed,
-            error.Protocol,
-            error.BigEndianUnsupported,
-            error.MessageTooLarge,
-            => {
-                if (self.client) |*client| client.deinit();
-                self.client = null;
-            },
-            else => {},
-        }
-    }
-
-    fn destroy(self: *Worker) void {
-        if (self.client) |*client| client.deinit();
-        self.jobs.deinit(self.gpa);
-        for (self.results.items) |*result| result.deinit();
-        self.results.deinit(self.gpa);
-        self.gpa.destroy(self);
-    }
 };
+
+pub const Worker = worker.Worker(Job, Result, bluetooth.Client, Hooks);

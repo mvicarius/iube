@@ -65,6 +65,9 @@ pub const Device = struct {
     name: []const u8,
     description: []const u8,
     channels: u8,
+    /// Per-channel volumes as reported by the server. Kept so a volume change
+    /// scales each channel instead of flattening an existing left/right balance.
+    volumes: [32]u32 = @splat(0),
     volume: u32,
     mute: bool,
     is_default: bool,
@@ -163,7 +166,7 @@ pub const Client = struct {
         const packet_tag = self.startCommand(&builder, cmd);
         builder.putU32(device.index);
         builder.putNullString();
-        builder.putCVolume(device.channels, volume);
+        builder.putCVolumeScaled(device.channels, &device.volumes, volume);
         try self.send(&builder);
         var reply = try self.receiveReply(packet_tag);
         reply.deinit();
@@ -265,6 +268,7 @@ pub const Client = struct {
                 .name = try alloc.dupe(u8, name),
                 .description = try alloc.dupe(u8, description),
                 .channels = if (cvolume.channels > 0) cvolume.channels else 1,
+                .volumes = cvolume.volumes,
                 .volume = cvolume.volume,
                 .mute = mute,
                 .is_default = is_default,
@@ -388,6 +392,7 @@ pub const Client = struct {
 const CVolume = struct {
     channels: u8,
     volume: u32,
+    volumes: [32]u32 = @splat(0),
 };
 
 const SampleSpec = struct {
@@ -413,15 +418,18 @@ const Builder = struct {
     }
 
     fn putByte(self: *Builder, value: u8) void {
-        std.debug.assert(self.len < self.data.len);
+        if (self.len == self.data.len) return;
         self.data[self.len] = value;
         self.len += 1;
     }
 
+    /// Best-effort append. The buffer is sized for every command iube sends;
+    /// an unexpectedly long server-supplied name is truncated instead of
+    /// writing past the buffer in release builds.
     fn putRaw(self: *Builder, bytes: []const u8) void {
-        std.debug.assert(self.len + bytes.len <= self.data.len);
-        @memcpy(self.data[self.len .. self.len + bytes.len], bytes);
-        self.len += bytes.len;
+        const count = @min(bytes.len, self.data.len - self.len);
+        @memcpy(self.data[self.len .. self.len + count], bytes[0..count]);
+        self.len += count;
     }
 
     fn putRawU32(self: *Builder, value: u32) void {
@@ -436,8 +444,9 @@ const Builder = struct {
     }
 
     fn putString(self: *Builder, value: []const u8) void {
+        const count = @min(value.len, self.data.len -| self.len -| 2);
         self.putByte(tag.string);
-        self.putRaw(value);
+        self.putRaw(value[0..count]);
         self.putByte(0);
     }
 
@@ -450,9 +459,10 @@ const Builder = struct {
     }
 
     fn putArbitrary(self: *Builder, bytes: []const u8) void {
+        const count = @min(bytes.len, self.data.len -| self.len -| 5);
         self.putByte(tag.arbitrary);
-        self.putRawU32(@intCast(bytes.len));
-        self.putRaw(bytes);
+        self.putRawU32(@intCast(count));
+        self.putRaw(bytes[0..count]);
     }
 
     fn putCVolume(self: *Builder, channels: u8, volume: u32) void {
@@ -461,6 +471,33 @@ const Builder = struct {
         self.putByte(count);
         var i: u8 = 0;
         while (i < count) : (i += 1) self.putRawU32(volume);
+    }
+
+    /// Write a new maximum volume while preserving the ratio between channels.
+    fn putCVolumeScaled(
+        self: *Builder,
+        channels: u8,
+        volumes: *const [32]u32,
+        target: u32,
+    ) void {
+        const count = @max(@as(u8, 1), channels);
+        var max_volume: u32 = 0;
+        var i: u8 = 0;
+        while (i < count and i < volumes.len) : (i += 1) {
+            max_volume = @max(max_volume, volumes[i]);
+        }
+
+        self.putByte(tag.cvolume);
+        self.putByte(count);
+        i = 0;
+        while (i < count) : (i += 1) {
+            var value = target;
+            if (max_volume > 0 and i < volumes.len) {
+                const scaled = @as(u64, volumes[i]) * target;
+                value = @intCast(@min(scaled / max_volume, std.math.maxInt(u32)));
+            }
+            self.putRawU32(value);
+        }
     }
 };
 
@@ -543,12 +580,15 @@ const TagReader = struct {
         try self.expect(tag.cvolume);
         const channels = try self.getByte();
         if (channels > 32) return error.Protocol;
+        var volumes: [32]u32 = @splat(0);
         var max_volume: u32 = 0;
         var i: u8 = 0;
         while (i < channels) : (i += 1) {
-            max_volume = @max(max_volume, try self.getRawU32());
+            const value = try self.getRawU32();
+            volumes[i] = value;
+            max_volume = @max(max_volume, value);
         }
-        return .{ .channels = channels, .volume = max_volume };
+        return .{ .channels = channels, .volume = max_volume, .volumes = volumes };
     }
 
     fn getUsec(self: *TagReader) !void {
@@ -596,6 +636,20 @@ fn cookiePath(buffer: []u8, env: Env) ?[]const u8 {
         }
     }
     return null;
+}
+
+test "scaled cvolume preserves channel balance" {
+    var builder = Builder{};
+    var pair: [32]u32 = @splat(1000);
+    pair[1] = 500;
+    builder.putCVolumeScaled(2, &pair, 2000);
+
+    var reader = TagReader{ .data = builder.slice() };
+    const result = try reader.getCVolume();
+    try std.testing.expectEqual(@as(u8, 2), result.channels);
+    try std.testing.expectEqual(@as(u32, 2000), result.volumes[0]);
+    try std.testing.expectEqual(@as(u32, 1000), result.volumes[1]);
+    try std.testing.expectEqual(@as(u32, 2000), result.volume);
 }
 
 test "tag builder and reader round trip" {

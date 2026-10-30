@@ -86,8 +86,7 @@ pub const Launcher = struct {
         if (!is_repeat and (key.keysym == ui.key_return or key.keysym == ui.key_kp_enter)) {
             if (self.selected) |selected| {
                 if (selected < self.visible_count) {
-                    self.launch(s, self.visible[selected]);
-                    s.running = false;
+                    if (self.launch(s, self.visible[selected])) s.running = false;
                 }
             }
             return;
@@ -165,8 +164,7 @@ pub const Launcher = struct {
 
     pub fn pointerClick(self: *Launcher, s: *session.Session) void {
         if (self.hitRow(s, s.pointer_x, s.pointer_y)) |index| {
-            self.launch(s, self.visible[index]);
-            s.running = false;
+            if (self.launch(s, self.visible[index])) s.running = false;
         }
     }
 
@@ -213,7 +211,7 @@ pub const Launcher = struct {
         }
     }
 
-    fn listGeometry(_: *Launcher, s: *session.Session) struct { x: i32, y: i32, w: i32, h: i32 } {
+    fn listGeometry(_: *Launcher, s: *session.Session) ui.ListLayout {
         const width: i32 = @intCast(s.client.logical_width);
         const height: i32 = @intCast(s.client.logical_height);
         const m = s.metrics;
@@ -227,36 +225,29 @@ pub const Launcher = struct {
     }
 
     fn maxScroll(self: *Launcher, s: *session.Session) i32 {
-        const geometry = self.listGeometry(s);
-        const content = @as(i32, @intCast(self.visible_count)) * s.metrics.row_step;
-        return @max(0, content - geometry.h);
+        return self.listGeometry(s).maxScroll(self.visible_count, s.metrics, 0);
     }
 
     fn ensureSelectionVisible(self: *Launcher, s: *session.Session) void {
-        const geometry = self.listGeometry(s);
         const selected = self.selected orelse return;
-        const top = @as(i32, @intCast(selected)) * s.metrics.row_step;
-        const bottom = top + s.metrics.row_height;
-
-        if (top < self.scroll) self.scroll = top;
-        if (bottom > self.scroll + geometry.h) self.scroll = bottom - geometry.h;
-        self.scroll = std.math.clamp(self.scroll, 0, self.maxScroll(s));
+        self.listGeometry(s).ensureSelectionVisible(
+            selected,
+            &self.scroll,
+            s.metrics,
+            self.visible_count,
+            0,
+        );
     }
 
     fn hitRow(self: *Launcher, s: *session.Session, x: f32, y: f32) ?usize {
-        const geometry = self.listGeometry(s);
-        const fx: i32 = @intFromFloat(@floor(x));
-        const fy: i32 = @intFromFloat(@floor(y));
-
-        if (fx < geometry.x or fx >= geometry.x + geometry.w) return null;
-        if (fy < geometry.y or fy >= geometry.y + geometry.h) return null;
-
-        const local = fy - geometry.y + self.scroll;
-        if (local < 0) return null;
-        const index: usize = @intCast(@divTrunc(local, s.metrics.row_step));
-        if (index >= self.visible_count) return null;
-        if (@mod(local, s.metrics.row_step) >= s.metrics.row_height) return null;
-        return index;
+        return self.listGeometry(s).hitRow(
+            s.pointer_inside,
+            x,
+            y,
+            self.scroll,
+            self.visible_count,
+            s.metrics,
+        );
     }
 
     fn updateHover(self: *Launcher, s: *session.Session) void {
@@ -393,7 +384,7 @@ pub const Launcher = struct {
                         ui.px(m.icon_radius, output_scale),
                         cfg.highlight_low,
                     );
-                    const initial = appInitial(self.apps.getName(app_index));
+                    const initial = ui.appInitial(self.apps.getName(app_index));
                     const initial_width = font.textWidth(initial, font_scale);
                     _ = canvas.text(
                         icon_x + @divTrunc(icon_px - initial_width, 2),
@@ -427,8 +418,8 @@ pub const Launcher = struct {
         canvas.resetClip();
     }
 
-    fn launch(self: *Launcher, s: *session.Session, idx: usize) void {
-        if (self.apps.len() <= idx) return;
+    fn launch(self: *Launcher, s: *session.Session, idx: usize) bool {
+        if (self.apps.len() <= idx) return false;
         const exec = self.apps.getExec(idx);
 
         var command_buffer: [8192]u8 = undefined;
@@ -437,10 +428,11 @@ pub const Launcher = struct {
         if (self.apps.isTerminal(idx)) {
             if (!self.launchInTerminal(s, command)) {
                 std.log.err("no terminal emulator found for '{s}'", .{self.apps.getName(idx)});
+                return false;
             }
-            return;
+            return true;
         }
-        spawnCommand(s.io, command);
+        return spawnCommand(s.io, command);
     }
 
     /// Terminal=true .desktop entries have no window of their own. Run them inside
@@ -554,15 +546,6 @@ fn drawQuery(
     return canvas.text(x, y, text[start..], color, glyph_scale);
 }
 
-fn appInitial(name: []const u8) []const u8 {
-    if (name.len == 0) return "?";
-    const len = std.unicode.utf8ByteSequenceLength(name[0]) catch return "?";
-    if (len > name.len) return "?";
-    const codepoint = std.unicode.utf8Decode(name[0..len]) catch return "?";
-    if (font.glyph(codepoint) == null) return "?";
-    return name[0..len];
-}
-
 fn getIcon(self: *Launcher, index: usize) ?*png.Image {
     const slot = &self.icons[index];
     if (!slot.tried) {
@@ -581,7 +564,7 @@ fn getIcon(self: *Launcher, index: usize) ?*png.Image {
     return null;
 }
 
-fn spawnCommand(io: std.Io, command: []const u8) void {
+fn spawnCommand(io: std.Io, command: []const u8) bool {
     const argv = [_][]const u8{ "sh", "-c", command };
     _ = std.process.spawn(io, .{
         .argv = &argv,
@@ -590,8 +573,9 @@ fn spawnCommand(io: std.Io, command: []const u8) void {
         .stderr = .ignore,
     }) catch |err| {
         std.log.err("failed to launch '{s}': {s}", .{ command, @errorName(err) });
-        return;
+        return false;
     };
+    return true;
 }
 
 fn hasArg(args: []const []const u8, needle: []const u8) bool {

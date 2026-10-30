@@ -13,8 +13,6 @@ const ui = @import("ui.zig");
 const session = @import("session.zig");
 const audio = @import("audio.zig");
 
-const base_header_height = 36;
-const base_footer_height = 24;
 const base_tab_height = 26;
 const max_visible_rows = 8;
 const volume_step = 5;
@@ -48,13 +46,6 @@ const TabRect = struct {
     h: i32,
 };
 
-const ListGeometry = struct {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-};
-
 pub const Audio = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -68,9 +59,7 @@ pub const Audio = struct {
     hover: ?usize = null,
     scroll: i32 = 0,
 
-    error_buffer: [256]u8 = undefined,
-    error_len: usize = 0,
-    error_deadline_ms: i64 = 0,
+    notice: ui.Notice = .{},
 
     pub fn init(io: std.Io, gpa: std.mem.Allocator, env: audio.Env) Audio {
         var view = Audio{
@@ -94,8 +83,8 @@ pub const Audio = struct {
             3
         else
             std.math.clamp(self.deviceRowCount(), 1, max_visible_rows);
-        const header = ui.scaled(base_header_height, metrics.scale);
-        const footer = ui.scaled(base_footer_height, metrics.scale);
+        const header = ui.scaled(ui.base_header_height, metrics.scale);
+        const footer = ui.scaled(ui.base_footer_height, metrics.scale);
         const content = @as(i32, @intCast(rows)) * metrics.row_step - metrics.gap;
         return .{
             .width = metrics.window_width,
@@ -111,11 +100,7 @@ pub const Audio = struct {
     }
 
     pub fn tick(self: *Audio, s: *session.Session) void {
-        if (self.error_len == 0 or self.error_deadline_ms == 0) return;
-        if (s.nowMs() < self.error_deadline_ms) return;
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
-        s.dirty = true;
+        if (self.notice.expire(s.nowMs())) s.dirty = true;
     }
 
     pub fn overTextField(_: *Audio, _: *session.Session) bool {
@@ -128,6 +113,7 @@ pub const Audio = struct {
         if (key.mods.ctrl or key.mods.alt or key.mods.super) return;
 
         if (key.keysym == key_tab) {
+            if (is_repeat) return;
             self.tab = switch (self.tab) {
                 .outputs => .inputs,
                 .inputs => .outputs,
@@ -160,7 +146,7 @@ pub const Audio = struct {
         }
 
         if (key.keysym == ui.key_return or key.keysym == ui.key_kp_enter) {
-            self.setDefault(s);
+            if (!is_repeat) self.setDefault(s);
             return;
         }
 
@@ -256,8 +242,7 @@ pub const Audio = struct {
     }
 
     fn reload(self: *Audio) void {
-        self.error_len = 0;
-        self.error_deadline_ms = 0;
+        self.notice.clear();
 
         if (self.state) |*state| state.deinit();
         if (self.client) |*client| client.deinit();
@@ -286,27 +271,11 @@ pub const Audio = struct {
     }
 
     fn setError(self: *Audio, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Audio error";
-        self.error_len = text.len;
-        self.error_deadline_ms = self.nowMs() + 5000;
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 5000);
     }
 
     fn setFatalError(self: *Audio, prefix: []const u8, err: anyerror) void {
-        const text: []const u8 = std.fmt.bufPrint(
-            &self.error_buffer,
-            "{s}: {s}",
-            .{ prefix, @errorName(err) },
-        ) catch "Audio error";
-        self.error_len = text.len;
-        self.error_deadline_ms = 0;
-    }
-
-    fn errorSlice(self: *const Audio) []const u8 {
-        return self.error_buffer[0..self.error_len];
+        self.notice.setDetail(prefix, @errorName(err), self.nowMs(), 0);
     }
 
     fn deviceRowCount(self: *const Audio) usize {
@@ -402,7 +371,7 @@ pub const Audio = struct {
         const outputs_width = font.textWidth("Outputs", text_scale) + padding * 2;
         const inputs_width = font.textWidth("Inputs", text_scale) + padding * 2;
         const tab_height = ui.scaled(base_tab_height, dimension_scale);
-        const header_height = ui.scaled(base_header_height, dimension_scale);
+        const header_height = ui.scaled(ui.base_header_height, dimension_scale);
         const y = m.margin + @divTrunc(header_height - tab_height, 2);
         const inputs_x = width - m.margin - inputs_width;
         const outputs_x = inputs_x - m.gap - outputs_width;
@@ -426,12 +395,12 @@ pub const Audio = struct {
         return null;
     }
 
-    fn listGeometry(_: *Audio, s: *session.Session) ListGeometry {
+    fn listGeometry(_: *Audio, s: *session.Session) ui.ListLayout {
         const width: i32 = @intCast(s.client.logical_width);
         const height: i32 = @intCast(s.client.logical_height);
         const m = s.metrics;
-        const header = ui.scaled(base_header_height, m.scale);
-        const footer = ui.scaled(base_footer_height, m.scale);
+        const header = ui.scaled(ui.base_header_height, m.scale);
+        const footer = ui.scaled(ui.base_footer_height, m.scale);
         const y = m.margin + header + m.gap;
         return .{
             .x = m.margin,
@@ -443,36 +412,30 @@ pub const Audio = struct {
 
     fn maxScroll(self: *Audio, s: *session.Session) i32 {
         const list = self.devices() orelse return 0;
-        const geometry = self.listGeometry(s);
-        const content = @as(i32, @intCast(list.len)) * s.metrics.row_step - s.metrics.gap;
-        return @max(0, content - geometry.h);
+        return self.listGeometry(s).maxScroll(list.len, s.metrics, s.metrics.gap);
     }
 
     fn ensureSelectionVisible(self: *Audio, s: *session.Session) void {
-        const geometry = self.listGeometry(s);
-        const top = @as(i32, @intCast(self.selected)) * s.metrics.row_step;
-        const bottom = top + s.metrics.row_height;
-        if (top < self.scroll) self.scroll = top;
-        if (bottom > self.scroll + geometry.h) self.scroll = bottom - geometry.h;
-        self.scroll = std.math.clamp(self.scroll, 0, self.maxScroll(s));
+        const list = self.devices() orelse return;
+        self.listGeometry(s).ensureSelectionVisible(
+            self.selected,
+            &self.scroll,
+            s.metrics,
+            list.len,
+            s.metrics.gap,
+        );
     }
 
     fn hitRow(self: *Audio, s: *session.Session) ?usize {
-        if (!s.pointer_inside) return null;
         const list = self.devices() orelse return null;
-
-        const geometry = self.listGeometry(s);
-        const fx: i32 = @intFromFloat(@floor(s.pointer_x));
-        const fy: i32 = @intFromFloat(@floor(s.pointer_y));
-        if (fx < geometry.x or fx >= geometry.x + geometry.w) return null;
-        if (fy < geometry.y or fy >= geometry.y + geometry.h) return null;
-
-        const local = fy - geometry.y + self.scroll;
-        if (local < 0) return null;
-        const index: usize = @intCast(@divTrunc(local, s.metrics.row_step));
-        if (index >= list.len) return null;
-        if (@mod(local, s.metrics.row_step) >= s.metrics.row_height) return null;
-        return index;
+        return self.listGeometry(s).hitRow(
+            s.pointer_inside,
+            s.pointer_x,
+            s.pointer_y,
+            self.scroll,
+            list.len,
+            s.metrics,
+        );
     }
 
     fn updateHover(self: *Audio, s: *session.Session) void {
@@ -493,7 +456,7 @@ pub const Audio = struct {
     ) void {
         const m = s.metrics;
         const cfg = s.cfg;
-        const header_height = ui.scaled(base_header_height, m.scale);
+        const header_height = ui.scaled(ui.base_header_height, m.scale);
         const title_y = ui.px(m.margin, output_scale) +
             @divTrunc(ui.px(header_height, output_scale) - text_height, 2);
         _ = canvas.text(
@@ -532,7 +495,7 @@ pub const Audio = struct {
         self: *Audio,
         s: *session.Session,
         canvas: *render.Canvas,
-        geometry: ListGeometry,
+        geometry: ui.ListLayout,
         output_scale: i32,
         font_scale: f32,
         text_height: i32,
@@ -595,7 +558,7 @@ pub const Audio = struct {
                 ui.px(m.icon_radius, output_scale),
                 cfg.highlight_low,
             );
-            const initial = appInitial(device.label());
+            const initial = ui.appInitial(device.label());
             const initial_width = font.textWidth(initial, font_scale);
             _ = canvas.text(
                 icon_x + @divTrunc(icon_px - initial_width, 2),
@@ -702,44 +665,24 @@ pub const Audio = struct {
         self: *Audio,
         s: *session.Session,
         canvas: *render.Canvas,
-        geometry: ListGeometry,
+        geometry: ui.ListLayout,
         output_scale: i32,
         font_scale: f32,
         text_height: i32,
     ) void {
         const m = s.metrics;
-        const cfg = s.cfg;
-        const x = geometry.x + m.small_margin;
-        const y = geometry.y + m.gap;
-        const width = ui.px(@max(0, geometry.w - m.small_margin * 2), output_scale);
-
-        _ = canvas.text(
-            ui.px(x, output_scale),
-            ui.px(y, output_scale),
-            "Audio backend unavailable",
-            cfg.warm_2,
-            font_scale,
-        );
-
-        const body_scale = font_scale * 0.85;
-        const body_height = ui.textHeight(body_scale);
-        const line_height = body_height + ui.px(m.small_margin, output_scale);
-        const next = ui.drawWrapped(
+        ui.drawError(
             canvas,
-            ui.px(x, output_scale),
-            ui.px(y, output_scale) + text_height + ui.px(m.small_margin, output_scale),
-            width,
-            line_height,
-            self.errorSlice(),
-            cfg.warm_2,
-            body_scale,
-        );
-        _ = canvas.text(
-            ui.px(x, output_scale),
-            next + ui.px(m.small_margin, output_scale),
-            "Press R to retry, or Esc to close.",
-            cfg.muted,
-            body_scale,
+            s.cfg,
+            m,
+            geometry.x + m.small_margin,
+            geometry.y + m.gap,
+            @max(0, geometry.w - m.small_margin * 2),
+            output_scale,
+            font_scale,
+            text_height,
+            "Audio backend unavailable",
+            self.notice.text(),
         );
     }
 
@@ -750,34 +693,16 @@ pub const Audio = struct {
         output_scale: i32,
         font_scale: f32,
     ) void {
-        const m = s.metrics;
-        const cfg = s.cfg;
-        const hint_scale = font_scale * 0.8;
-        const hint_height = ui.textHeight(hint_scale);
-        const y = ui.px(@intCast(s.client.logical_height), output_scale) -
-            ui.px(m.margin, output_scale) - hint_height;
-        const width = ui.px(@max(0, @as(i32, @intCast(s.client.logical_width)) - m.margin * 2), output_scale);
-        const text = if (self.error_len > 0)
-            self.errorSlice()
-        else
-            "Up/Down select  Left/Right volume  M mute  Enter default  Tab  R  Esc";
-
-        _ = canvas.textFit(
-            ui.px(m.margin, output_scale),
-            y,
-            text,
-            if (self.error_len > 0) cfg.warm_2 else cfg.muted,
-            hint_scale,
-            width,
+        ui.drawFooter(
+            canvas,
+            s.cfg,
+            s.metrics,
+            @intCast(s.client.logical_width),
+            @intCast(s.client.logical_height),
+            output_scale,
+            font_scale,
+            self.notice.text(),
+            "Up/Down select  Left/Right volume  M mute  Enter default  Tab  R  Esc",
         );
     }
 };
-
-fn appInitial(name: []const u8) []const u8 {
-    if (name.len == 0) return "?";
-    const len = std.unicode.utf8ByteSequenceLength(name[0]) catch return "?";
-    if (len > name.len) return "?";
-    const codepoint = std.unicode.utf8Decode(name[0..len]) catch return "?";
-    if (font.glyph(codepoint) == null) return "?";
-    return name[0..len];
-}

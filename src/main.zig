@@ -13,14 +13,12 @@ const config = @import("config.zig");
 const session = @import("session.zig");
 const launcher = @import("launcher.zig");
 const panel = @import("panel.zig");
-const placeholder = @import("placeholder.zig");
 const audio_view = @import("audio_view.zig");
 const bluetooth_view = @import("bluetooth_view.zig");
 const wifi_view = @import("wifi_view.zig");
 const power_view = @import("power_view.zig");
 const brightness_view = @import("brightness_view.zig");
 const brightness_cli = @import("brightness_cli.zig");
-const tools = @import("tools.zig");
 
 pub const std_options: std.Options = .{ .log_level = .warn };
 
@@ -38,7 +36,7 @@ const usage =
     \\  iube power       open the power manager
     \\  iube brightness  open the brightness controller
     \\  iube <tool> <action> [args]
-    \\                   run a non-UI action (see docs/cli.md)
+    \\                   run a non-UI action (see docs/usage/index.md)
     \\  iube help        show this help
     \\  iube version     show the version
     \\
@@ -105,10 +103,6 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    if (tools.find(command)) |tool| {
-        return runPlaceholder(init, env, tool);
-    }
-
     std.debug.print("iube: unknown command '{s}'\n\n{s}", .{ command, usage });
     std.process.exit(2);
 }
@@ -132,11 +126,6 @@ fn runLauncher(init: std.process.Init, env: config.Env) !void {
 fn runPanel(init: std.process.Init, env: config.Env) !void {
     var view = panel.Panel.init(init.gpa);
     defer view.deinit();
-    try session.run(init.io, init.gpa, env, &view);
-}
-
-fn runPlaceholder(init: std.process.Init, env: config.Env, tool: *const tools.Tool) !void {
-    var view = placeholder.Placeholder{ .tool = tool };
     try session.run(init.io, init.gpa, env, &view);
 }
 

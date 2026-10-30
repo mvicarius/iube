@@ -37,48 +37,8 @@ pub const OnOff = enum {
     }
 };
 
-pub const Profile = enum {
-    low_power,
-    power_saver,
-    balanced,
-    performance,
-
-    fn name(self: Profile) []const u8 {
-        return switch (self) {
-            .low_power => "low-power",
-            .power_saver => "power-saver",
-            .balanced => "balanced",
-            .performance => "performance",
-        };
-    }
-
-    fn parse(text: []const u8) ?Profile {
-        if (std.mem.eql(u8, text, "low-power")) return .low_power;
-        if (std.mem.eql(u8, text, "power-saver")) return .power_saver;
-        if (std.mem.eql(u8, text, "balanced")) return .balanced;
-        if (std.mem.eql(u8, text, "performance")) return .performance;
-        return null;
-    }
-};
-
-/// ACPI uses `low-power`, power-profiles-daemon uses `power-saver`. Accept
-/// either spelling and report the name actually advertised by the backend.
-fn resolveProfileName(choices: []const []const u8, requested: Profile) ?[]const u8 {
-    const primary = requested.name();
-    for (choices) |choice| {
-        if (std.mem.eql(u8, choice, primary)) return choice;
-    }
-    if (requested == .low_power) {
-        for (choices) |choice| {
-            if (std.mem.eql(u8, choice, "power-saver")) return choice;
-        }
-    } else if (requested == .power_saver) {
-        for (choices) |choice| {
-            if (std.mem.eql(u8, choice, "low-power")) return choice;
-        }
-    }
-    return null;
-}
+const Profile = power.Profile;
+const resolveProfileName = power.resolveProfileName;
 
 pub const Action = union(enum) {
     audio_volume_up: u8,
@@ -447,9 +407,11 @@ fn bluetoothPair(init: std.process.Init, query: []const u8) !void {
     if (!adapter.powered) return error.BluetoothAdapterOff;
     const device = try resolveBluetooth(state.devices, query);
     const outcome = try client.pair(device.path);
+    var label_buffer: [512]u8 = undefined;
+    const label = safeText(&label_buffer, device.label());
     switch (outcome) {
-        .paired => printOut(init.io, "Paired \"{s}\" ({s})\n", .{ device.label(), device.address }),
-        .already_paired => printOut(init.io, "\"{s}\" ({s}) is already paired\n", .{ device.label(), device.address }),
+        .paired => printOut(init.io, "Paired \"{s}\" ({s})\n", .{ label, device.address }),
+        .already_paired => printOut(init.io, "\"{s}\" ({s}) is already paired\n", .{ label, device.address }),
     }
 }
 
@@ -461,7 +423,11 @@ fn bluetoothForget(init: std.process.Init, query: []const u8) !void {
 
     const device = try resolveBluetooth(state.devices, query);
     try client.removeDevice(device);
-    printOut(init.io, "Forgot \"{s}\" ({s})\n", .{ device.label(), device.address });
+    var label_buffer: [512]u8 = undefined;
+    printOut(init.io, "Forgot \"{s}\" ({s})\n", .{
+        safeText(&label_buffer, device.label()),
+        device.address,
+    });
 }
 
 fn resolveBluetooth(devices: []const bluetooth.Device, query: []const u8) !bluetooth.Device {
@@ -478,9 +444,10 @@ fn bluetoothList(init: std.process.Init) !void {
     var state = try client.refresh(init.gpa);
     defer state.deinit();
 
+    var label_buffer: [512]u8 = undefined;
     if (state.adapter()) |adapter| {
         printOut(init.io, "Adapter: {s}\t{s}\t{s}\n", .{
-            adapter.label(),
+            safeText(&label_buffer, adapter.label()),
             adapter.address,
             if (adapter.powered) "on" else "off",
         });
@@ -496,7 +463,7 @@ fn bluetoothList(init: std.process.Init) !void {
     for (state.devices) |device| {
         printOut(init.io, "{s}\t{s}\t{s}\n", .{
             device.stateLabel(),
-            device.label(),
+            safeText(&label_buffer, device.label()),
             device.address,
         });
     }
@@ -544,6 +511,14 @@ fn wifiConnect(init: std.process.Init, ssid: []const u8) !void {
 
     const device = state.device orelse return error.NoWifiDevice;
 
+    // An empty SSID means a hidden access point. iube cannot match it against a
+    // saved profile, so refuse instead of creating an unnamed profile.
+    if (ssid.len == 0) return error.NetworkNotFound;
+
+    var label_buffer: [512]u8 = undefined;
+    var password_buffer: [256]u8 = undefined;
+    defer @memset(password_buffer[0..], 0);
+
     var visible: ?wifi.Network = null;
     for (state.networks) |network| {
         if (std.mem.eql(u8, network.ssid, ssid)) {
@@ -554,28 +529,22 @@ fn wifiConnect(init: std.process.Init, ssid: []const u8) !void {
 
     if (visible) |network| {
         if (network.connected) {
-            printOut(init.io, "Already connected to {s}\n", .{ssid});
+            printOut(init.io, "Already connected to {s}\n", .{safeText(&label_buffer, ssid)});
             return;
         }
 
         if (state.findSaved(network.ssid)) |saved| {
             try client.activateSaved(device, network, saved);
         } else {
-            var password_buffer: [256]u8 = undefined;
             var password: []const u8 = "";
             if (network.secured) {
                 printErr(init.io, "Password: ", .{});
                 password = readPassword(init.io, &password_buffer) catch return error.PasswordReadFailed;
                 printErr(init.io, "\n", .{});
-                if (password.len == 0) {
-                    @memset(password_buffer[0..], 0);
-                    return error.EmptyPassword;
-                }
+                if (password.len == 0) return error.EmptyPassword;
             }
 
-            const result = client.addAndActivate(device, network, password);
-            @memset(password_buffer[0..], 0);
-            try result;
+            try client.addAndActivate(device, network, password);
         }
     } else {
         // NetworkManager accepts "/" as "let me pick the access point". This
@@ -592,8 +561,8 @@ fn wifiConnect(init: std.process.Init, ssid: []const u8) !void {
         try client.activateSaved(device, network, saved);
     }
 
-    printOut(init.io, "Connecting to {s}\n", .{ssid});
-    if (!waitForActivation(init.io, init.gpa, &client, ssid)) {
+    printOut(init.io, "Connecting to {s}\n", .{safeText(&label_buffer, ssid)});
+    if (!waitForActivation(init.io, init.gpa, &client)) {
         return error.ConnectionTimedOut;
     }
     printOut(init.io, "Connected\n", .{});
@@ -603,7 +572,6 @@ fn waitForActivation(
     io: std.Io,
     gpa: std.mem.Allocator,
     client: *wifi.Client,
-    ssid: []const u8,
 ) bool {
     var waited_ms: u32 = 0;
     // NM_DEVICE_STATE_ACTIVATED is 100 and NM_DEVICE_STATE_FAILED is 120.
@@ -614,11 +582,9 @@ fn waitForActivation(
         defer state.deinit();
         const device = state.device orelse continue;
         if (device.state == 120) return false;
-        if (device.state == 100) {
-            for (state.networks) |network| {
-                if (network.connected and std.mem.eql(u8, network.ssid, ssid)) return true;
-            }
-        }
+        // NM_DEVICE_STATE_ACTIVATED. Do not require a scan entry: the profile
+        // may be a saved hidden network that is not in the current AP list.
+        if (device.state == 100) return true;
     }
     return false;
 }
@@ -683,16 +649,7 @@ fn powerProfileNext(init: std.process.Init) !void {
     defer state.deinit();
 
     const profile = state.profile orelse return error.ProfileUnavailable;
-    if (profile.choices.len == 0) return error.ProfileUnavailable;
-
-    var active_index: usize = 0;
-    for (profile.choices, 0..) |choice, index| {
-        if (std.mem.eql(u8, choice, profile.active)) {
-            active_index = index;
-            break;
-        }
-    }
-    const next = profile.choices[(active_index + 1) % profile.choices.len];
+    const next = profile.next() orelse return error.ProfileUnavailable;
     try client.setProfile(profile, next);
     printOut(init.io, "Power profile: {s}\n", .{next});
 }
@@ -735,6 +692,7 @@ fn printWifiState(io: std.Io, state: wifi.State) void {
         printOut(io, "No networks\n", .{});
         return;
     }
+    var label_buffer: [512]u8 = undefined;
     for (state.networks) |network| {
         const status = if (network.connected)
             "connected"
@@ -745,7 +703,7 @@ fn printWifiState(io: std.Io, state: wifi.State) void {
         else
             "open";
         printOut(io, "{s}\t{s}\t{d}%\t{s}\n", .{
-            network.label(),
+            safeText(&label_buffer, network.label()),
             status,
             network.strength,
             network.bandLabel() orelse "",
@@ -820,6 +778,7 @@ fn failureMessage(err: anyerror) []const u8 {
         error.NoWifiDevice => "no Wi-Fi device",
         error.NetworkNotFound => "network not found; run 'iube wifi scan' first",
         error.NoSavedProfile => "no saved Wi-Fi profile for that network",
+        error.HiddenNetworkUnsupported => "hidden networks need a saved profile and cannot be created",
         error.NotConnected => "not connected",
         error.ProfileUnavailable => "power profiles are not available",
         error.ProfileNotAvailable => "that power profile is not available",
@@ -836,6 +795,39 @@ fn failureMessage(err: anyerror) []const u8 {
     };
 }
 
+/// SSIDs and Bluetooth names are untrusted, over-the-air strings. Escape
+/// control characters before they reach a terminal, Waybar or a log.
+fn safeText(buffer: []u8, text: []const u8) []const u8 {
+    var out: usize = 0;
+    var i: usize = 0;
+    while (i < text.len and out + 8 < buffer.len) {
+        const len = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+        if (len > 1 and i + len <= text.len) {
+            if (std.unicode.utf8Decode(text[i .. i + len])) |codepoint| {
+                if (codepoint < 0x20 or (codepoint >= 0x7f and codepoint <= 0x9f)) {
+                    const written = std.fmt.bufPrint(buffer[out..], "\\u{{{x}}}", .{codepoint}) catch break;
+                    out += written.len;
+                } else {
+                    @memcpy(buffer[out .. out + len], text[i .. i + len]);
+                    out += len;
+                }
+                i += len;
+                continue;
+            } else |_| {}
+        }
+        const byte = text[i];
+        if (byte < 0x20 or byte >= 0x7f) {
+            const written = std.fmt.bufPrint(buffer[out..], "\\x{x:0>2}", .{byte}) catch break;
+            out += written.len;
+        } else {
+            buffer[out] = byte;
+            out += 1;
+        }
+        i += 1;
+    }
+    return buffer[0..out];
+}
+
 fn printOut(io: std.Io, comptime format: []const u8, args: anytype) void {
     var buffer: [1024]u8 = undefined;
     const text = std.fmt.bufPrint(&buffer, format, args) catch return;
@@ -846,6 +838,13 @@ fn printErr(io: std.Io, comptime format: []const u8, args: anytype) void {
     var buffer: [1024]u8 = undefined;
     const text = std.fmt.bufPrint(&buffer, format, args) catch return;
     std.Io.File.stderr().writeStreamingAll(io, text) catch {};
+}
+
+test "safe text escapes terminal controls" {
+    var buffer: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("Cafe\\x1b[31m", safeText(&buffer, "Cafe\x1b[31m"));
+    try std.testing.expectEqualStrings("Café", safeText(&buffer, "Café"));
+    try std.testing.expectEqualStrings("a\\x7fb", safeText(&buffer, "a\x7fb"));
 }
 
 test "parse audio actions" {
