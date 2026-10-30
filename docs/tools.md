@@ -53,43 +53,9 @@ protocol details, controls, limitations and planned work, lives in
 
 ## Bluetooth (`iube bluetooth`)
 
-**Goal:** adapter state, discovery, pairing, connection and battery status
-without linking BlueZ client libraries.
-
-### Planned interfaces
-
-- **BlueZ over the system D-Bus.** Connect to `/run/dbus/system_bus_socket`,
-  authenticate with `EXTERNAL`, and use the `org.bluez` API:
-  - `org.freedesktop.DBus.ObjectManager.GetManagedObjects` for adapters and
-    known devices.
-  - `org.bluez.Adapter1` for `StartDiscovery`, `StopDiscovery`,
-    `SetDiscoveryFilter` and adapter properties.
-  - `org.bluez.Device1` for `Pair`, `Connect`, `Disconnect`, `RemoveDevice`,
-    `Connected`, `Paired`, `RSSI`, `Battery1`.
-  - `org.bluez.Agent1` for pairing confirmation/passkey prompts. This requires
-    iube to export a small D-Bus object and register an agent with BlueZ.
-- **rfkill and sysfs for radio state.** Read and write
-  `/sys/class/rfkill/rfkill*/{name,type,soft,hard}` and listen to `/dev/rfkill`
-  for adapter power changes. This covers the "Bluetooth is blocked" case even
-  when BlueZ is not running.
-
-### UI shape
-
-- Adapter switch (powered/off), discovery toggle.
-- Discovered and known devices with signal strength, paired/connected state and
-  battery percentage when BlueZ exposes it.
-- Pair/connect/disconnect/forget actions.
-- Pairing prompt for confirmation codes and passkeys.
-
-### Constraints
-
-- BlueZ owns the controller. iube must not open the HCI device directly while
-  BlueZ is running.
-- Pairing needs an agent object on D-Bus; that is the most involved part of the
-  first implementation.
-- D-Bus policy and polkit decide whether a normal user may toggle the adapter
-  or pair. iube should surface a clear permission error rather than retrying as
-  root.
+**Status:** initial implementation. The dedicated documentation, including the
+BlueZ integration, controls, limitations and planned work, lives in
+[bluetooth.md](bluetooth.md).
 
 ## Wi-Fi (`iube wifi`)
 

@@ -14,6 +14,7 @@ const launcher = @import("launcher.zig");
 const panel = @import("panel.zig");
 const placeholder = @import("placeholder.zig");
 const audio_view = @import("audio_view.zig");
+const bluetooth_view = @import("bluetooth_view.zig");
 const tools = @import("tools.zig");
 
 pub const std_options: std.Options = .{ .log_level = .warn };
@@ -25,7 +26,7 @@ const usage =
     \\  iube             open the iube control panel
     \\  iube launch      open the application launcher
     \\  iube audio       open the audio manager
-    \\  iube bluetooth   open the bluetooth manager (coming soon)
+    \\  iube bluetooth   open the Bluetooth controller
     \\  iube wifi        open the Wi-Fi manager (coming soon)
     \\  iube power       open the power manager (coming soon)
     \\  iube help        show this help
@@ -55,6 +56,9 @@ pub fn main(init: std.process.Init) !void {
     }
     if (std.mem.eql(u8, command, "audio")) {
         return runAudio(init, env);
+    }
+    if (std.mem.eql(u8, command, "bluetooth")) {
+        return runBluetooth(init, env);
     }
     if (std.mem.eql(u8, command, "help") or
         std.mem.eql(u8, command, "--help") or
@@ -112,6 +116,13 @@ fn runAudio(init: std.process.Init, env: config.Env) !void {
         .home = init.environ_map.get("HOME"),
         .xdg_config_home = init.environ_map.get("XDG_CONFIG_HOME"),
     });
+    defer view.deinit();
+
+    try session.run(init.io, init.gpa, env, &view);
+}
+
+fn runBluetooth(init: std.process.Init, env: config.Env) !void {
+    var view = bluetooth_view.Bluetooth.init(init.io, init.gpa);
     defer view.deinit();
 
     try session.run(init.io, init.gpa, env, &view);

@@ -43,9 +43,9 @@ pub const all = [_]Tool{
     .{
         .id = "bluetooth",
         .name = "Bluetooth",
-        .description = "Adapters, pairing and connected devices.",
-        .status = .coming_soon,
-        .backend = "BlueZ over the system D-Bus, plus rfkill/sysfs state.",
+        .description = "Adapter power, discovery and connected devices.",
+        .status = .available,
+        .backend = "BlueZ over the system D-Bus.",
         .icon = @embedFile("icons/bluetooth.png"),
     },
     .{

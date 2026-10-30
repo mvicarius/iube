@@ -115,7 +115,6 @@ pub const Audio = struct {
 
     pub fn handleKey(self: *Audio, s: *session.Session, key: wayland.Key, is_repeat: bool) void {
         if (!key.pressed) return;
-        _ = is_repeat;
 
         if (key.mods.ctrl or key.mods.alt or key.mods.super) return;
 
@@ -157,13 +156,15 @@ pub const Audio = struct {
         }
 
         if (key.keysym == 'm' or key.keysym == 'M') {
-            self.toggleMute(s);
+            if (!is_repeat) self.toggleMute(s);
             return;
         }
 
         if (key.keysym == 'r' or key.keysym == 'R') {
-            self.reload();
-            s.dirty = true;
+            if (!is_repeat) {
+                self.reload();
+                s.dirty = true;
+            }
         }
     }
 
