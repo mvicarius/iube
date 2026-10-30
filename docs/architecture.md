@@ -13,7 +13,7 @@ iube launch             -> launcher.Launcher
 iube audio              -> audio_view.Audio
 iube bluetooth          -> bluetooth_view.Bluetooth
 iube wifi               -> wifi_view.Wifi
-iube power              -> placeholder.Placeholder(power)
+iube power              -> power_view.Power
 iube help / version     -> text output, no Wayland connection
 ```
 
@@ -38,6 +38,8 @@ src/
   wifi_view.zig    Wi-Fi controller: network list, scan, connect, power
   wifi_worker.zig  long-lived Wi-Fi job worker
   wifi.zig         NetworkManager device, access point and profile model over D-Bus
+  power_view.zig   power controller: battery, profiles and session actions
+  power.zig        sysfs power supply, platform profile and logind client
   dbus.zig         minimal system D-Bus client (no libdbus)
 
   placeholder.zig  "coming soon" view for unfinished tools
@@ -69,9 +71,10 @@ Every command uses:
   handling.
 
 Only the view differs. `audio_view.zig` additionally uses `audio.zig`,
-`bluetooth_view.zig` uses `bluetooth.zig` and `dbus.zig`, and `wifi_view.zig`
-uses `wifi.zig` and `dbus.zig`. These are specific to their tools but still
-linked without any new dependency.
+`bluetooth_view.zig` uses `bluetooth.zig` and `dbus.zig`, `wifi_view.zig` uses
+`wifi.zig` and `dbus.zig`, and `power_view.zig` uses `power.zig` and
+`dbus.zig`. These are specific to their tools but still linked without any new
+dependency.
 
 ## View interface
 
@@ -132,7 +135,8 @@ All views share the same 640 px base width, multiplied by `scale` from the
 config. Heights differ:
 
 - Launcher: 640×360 base; the list scrolls.
-- Audio, Bluetooth and Wi-Fi: 640×360 base; the list scrolls when it grows.
+- Audio, Bluetooth, Wi-Fi and Power: the window grows to fit the visible
+  controls; Power uses a battery summary plus five action rows.
 - Control panel: height is computed from the number of tools:
   `margin * 2 + rows * row_step - gap`. Every entry is visible; the panel does
   not implement scrolling.

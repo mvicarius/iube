@@ -11,4 +11,5 @@ test {
     _ = @import("dbus.zig");
     _ = @import("bluetooth.zig");
     _ = @import("wifi.zig");
+    _ = @import("power.zig");
 }

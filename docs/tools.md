@@ -1,8 +1,8 @@
 # Tool backends
 
 This document describes how the iube management tools are meant to work, and
-how the implemented ones choose their backend. Audio, Bluetooth and Wi-Fi are
-implemented; the remaining entries are plans.
+how the implemented ones choose their backend. Audio, Bluetooth, Wi-Fi and
+Power are implemented; the remaining entries are plans.
 
 ## Dependency policy
 
@@ -104,44 +104,15 @@ and scan results directly and use the existing supplicant for association:
 
 ## Power (`iube power`)
 
-**Goal:** battery state, power profile and session actions without linking
-UPower, logind or power-profiles-daemon client libraries.
+**Status:** initial implementation. The dedicated documentation, including the
+sysfs fields, logind actions, controls, limitations and planned work, lives in
+[power.md](power.md).
 
-### Planned interfaces
-
-- **Battery and AC state from sysfs.** Read
-  `/sys/class/power_supply/*/type`, `capacity`, `status`, `energy_now`,
-  `energy_full`, `power_now`, `voltage_now`, `online`. Handle both `BAT*` and
-  `AC*`/`ADP*` naming. Use `energy_*`/`power_*` when present and fall back to
-  `charge_*`/`current_*`.
-- **Power profiles.** Read and write
-  `/sys/firmware/acpi/platform_profile` with the choices from
-  `/sys/firmware/acpi/platform_profile_choices`
-  (`low-power`, `balanced`, `performance`). Fall back to
-  `net.hadess.PowerProfiles` over D-Bus when the firmware interface is absent or
-  read-only.
-- **Session actions through logind.** Use
-  `org.freedesktop.login1.Manager` on the system D-Bus:
-  `CanSuspend`, `Suspend`, `CanHibernate`, `Hibernate`, `CanPowerOff`,
-  `PowerOff`, `CanReboot`, `Reboot`, `LockSessions`. logind asks polkit for the
-  privilege decision and performs the action.
-
-### UI shape
-
-- Battery percentage and charging/discharging state.
-- Estimated time remaining when the kernel exposes enough data.
-- Power profile selector.
-- Suspend, hibernate, reboot, shutdown and lock actions, with confirmation for
-  destructive ones.
-- Optional: lid-switch and critical-battery state read-only.
-
-### Constraints
-
-- Battery sysfs layouts vary by driver; every read needs a fallback.
-- Writing `platform_profile` may be denied to normal users; surface the exact
-  error and leave the profile unchanged.
-- logind may refuse or prompt through polkit. iube must not block the UI while
-  waiting for a policy decision.
+The power view reads the battery and AC state from `/sys/class/power_supply`,
+uses the ACPI platform profile through sysfs or power-profiles-daemon, and
+performs suspend, hibernate, restart, shutdown and lock requests through logind.
+It does not link UPower, libsystemd or libnm, and it does not keep a resident
+daemon.
 
 ## Cross-tool conventions
 
