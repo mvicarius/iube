@@ -18,6 +18,8 @@ const audio_view = @import("audio_view.zig");
 const bluetooth_view = @import("bluetooth_view.zig");
 const wifi_view = @import("wifi_view.zig");
 const power_view = @import("power_view.zig");
+const brightness_view = @import("brightness_view.zig");
+const brightness_cli = @import("brightness_cli.zig");
 const tools = @import("tools.zig");
 
 pub const std_options: std.Options = .{ .log_level = .warn };
@@ -32,6 +34,7 @@ const usage =
     \\  iube bluetooth   open the Bluetooth controller
     \\  iube wifi        open the Wi-Fi manager
     \\  iube power       open the power manager
+    \\  iube brightness  open the brightness controller
     \\  iube <tool> <action> [args]
     \\                   run a non-UI action (see docs/cli.md)
     \\  iube help        show this help
@@ -79,6 +82,11 @@ pub fn main(init: std.process.Init) !void {
     }
     if (std.mem.eql(u8, command, "power")) {
         return runPower(init, env);
+    }
+    if (std.mem.eql(u8, command, "brightness")) {
+        if (args.len == 2) return runBrightness(init, env);
+        brightness_cli.run(init, args);
+        return;
     }
     if (std.mem.eql(u8, command, "help") or
         std.mem.eql(u8, command, "--help") or
@@ -157,6 +165,13 @@ fn runWifi(init: std.process.Init, env: config.Env) !void {
 
 fn runPower(init: std.process.Init, env: config.Env) !void {
     var view = power_view.Power.init(init.io, init.gpa);
+    defer view.deinit();
+
+    try session.run(init.io, init.gpa, env, &view);
+}
+
+fn runBrightness(init: std.process.Init, env: config.Env) !void {
+    var view = brightness_view.Brightness.init(init.io, init.gpa);
     defer view.deinit();
 
     try session.run(init.io, init.gpa, env, &view);

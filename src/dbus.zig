@@ -39,6 +39,8 @@ pub const Client = struct {
     gpa: std.mem.Allocator,
     stream: std.Io.net.Stream,
     next_serial: u32 = 1,
+    error_name_buffer: [128]u8 = undefined,
+    error_name_len: usize = 0,
 
     pub fn connectSystem(io: std.Io, gpa: std.mem.Allocator) !Client {
         const address = try std.Io.net.UnixAddress.init("/run/dbus/system_bus_socket");
@@ -107,8 +109,12 @@ pub const Client = struct {
             }
 
             switch (received.message_type) {
-                method_return => return .{ .gpa = self.gpa, .body = received.body },
+                method_return => {
+                    self.error_name_len = 0;
+                    return .{ .gpa = self.gpa, .body = received.body };
+                },
                 error_reply => {
+                    self.recordErrorName(received.body);
                     self.gpa.free(received.body);
                     return error.MethodFailed;
                 },
@@ -118,6 +124,23 @@ pub const Client = struct {
                 },
             }
         }
+    }
+
+    /// Name from the most recent D-Bus error reply, for example
+    /// `org.freedesktop.DBus.Error.AccessDenied`. Empty after a successful
+    /// call. Callers can use this to turn a generic `MethodFailed` into a
+    /// useful message without parsing the error reply twice.
+    pub fn errorName(self: *const Client) []const u8 {
+        return self.error_name_buffer[0..self.error_name_len];
+    }
+
+    fn recordErrorName(self: *Client, body: []const u8) void {
+        self.error_name_len = 0;
+        var reader = Reader{ .data = body };
+        const name = reader.readString() catch return;
+        const length = @min(name.len, self.error_name_buffer.len);
+        @memcpy(self.error_name_buffer[0..length], name[0..length]);
+        self.error_name_len = length;
     }
 
     const Received = struct {
