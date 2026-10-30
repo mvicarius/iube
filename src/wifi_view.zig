@@ -34,6 +34,17 @@ pub const Wifi = struct {
     pending_ssid: [128]u8 = undefined,
     pending_ssid_len: usize = 0,
 
+    password_modal: bool = false,
+    password_buffer: [128]u8 = undefined,
+    password_len: usize = 0,
+    password_ssid: [128]u8 = undefined,
+    password_ssid_len: usize = 0,
+    password_ap: [256]u8 = undefined,
+    password_ap_len: usize = 0,
+    password_device: [256]u8 = undefined,
+    password_device_len: usize = 0,
+    password_error: bool = false,
+
     error_buffer: [256]u8 = undefined,
     error_len: usize = 0,
     error_deadline_ms: i64 = 0,
@@ -50,6 +61,7 @@ pub const Wifi = struct {
     }
 
     pub fn deinit(self: *Wifi) void {
+        self.wipePassword();
         if (self.worker) |worker| worker.stop();
         self.worker = null;
         if (self.state) |*state| state.deinit();
@@ -64,8 +76,8 @@ pub const Wifi = struct {
         return .{ .width = metrics.window_width, .height = metrics.window_height };
     }
 
-    pub fn wantsBlink(_: *Wifi) bool {
-        return false;
+    pub fn wantsBlink(self: *Wifi) bool {
+        return self.password_modal;
     }
 
     pub fn tick(self: *Wifi, s: *session.Session) void {
@@ -83,6 +95,7 @@ pub const Wifi = struct {
             s.dirty = true;
         }
 
+        if (self.password_modal) return;
         if (self.worker == null or self.pending_action != null or self.refresh_pending) return;
         const now = s.nowMs();
         if (self.last_refresh_request_ms != 0 and now - self.last_refresh_request_ms < refresh_ms) return;
@@ -108,7 +121,7 @@ pub const Wifi = struct {
                     self.setError("Wi-Fi refresh failed", result.error_value orelse error.Protocol);
                 }
             },
-            .scan, .wireless, .connect, .disconnect => {
+            .scan, .wireless, .connect, .connect_new, .disconnect => {
                 if (self.pending_action == result.kind) {
                     self.pending_action = null;
                     self.pending_ssid_len = 0;
@@ -119,6 +132,7 @@ pub const Wifi = struct {
                         .scan => "Scan failed",
                         .wireless => "Wi-Fi power change failed",
                         .connect => "Connection failed",
+                        .connect_new => "Connection failed (check password)",
                         .disconnect => "Disconnect failed",
                         else => unreachable,
                     };
@@ -140,6 +154,9 @@ pub const Wifi = struct {
         self.pending_action = null;
         self.pending_ssid_len = 0;
         self.refresh_pending = false;
+        self.password_modal = false;
+        self.password_error = false;
+        self.wipePassword();
 
         var ssid_buffer: [128]u8 = undefined;
         const previous_ssid = self.copySelectedSsid(&ssid_buffer);
@@ -185,13 +202,27 @@ pub const Wifi = struct {
         s.dirty = true;
     }
 
-    pub fn overTextField(_: *Wifi, _: *session.Session) bool {
-        return false;
+    pub fn overTextField(self: *Wifi, _: *session.Session) bool {
+        return self.password_modal;
+    }
+
+    /// Optional view-level Escape hook used by `session.zig`. While the
+    /// password prompt is open, Escape closes just the prompt instead of the
+    /// whole application.
+    pub fn handleEscape(self: *Wifi, s: *session.Session) bool {
+        if (!self.password_modal) return false;
+        self.closePasswordModal(s);
+        return true;
     }
 
     pub fn handleKey(self: *Wifi, s: *session.Session, key: wayland.Key, is_repeat: bool) void {
         if (!key.pressed) return;
         if (key.mods.ctrl or key.mods.alt or key.mods.super) return;
+
+        if (self.password_modal) {
+            self.handlePasswordKey(s, key, is_repeat);
+            return;
+        }
 
         if (key.keysym == ui.key_down) {
             self.moveSelection(s, 1);
@@ -242,6 +273,7 @@ pub const Wifi = struct {
     }
 
     pub fn pointerClick(self: *Wifi, s: *session.Session) void {
+        if (self.password_modal) return;
         if (self.hitRow(s)) |index| {
             self.selected = index;
             s.dirty = true;
@@ -249,6 +281,7 @@ pub const Wifi = struct {
     }
 
     pub fn pointerScroll(self: *Wifi, s: *session.Session, delta: f32) void {
+        if (self.password_modal) return;
         const max_scroll = self.maxScroll(s);
         if (max_scroll == 0) return;
         self.scroll = std.math.clamp(
@@ -289,6 +322,9 @@ pub const Wifi = struct {
 
         canvas.resetClip();
         self.drawFooter(s, canvas, output_scale, font_scale);
+        if (self.password_modal) {
+            self.drawPasswordModal(s, canvas, output_scale, font_scale, text_height);
+        }
     }
 
     fn drawHeader(
@@ -457,7 +493,8 @@ pub const Wifi = struct {
                 output_scale,
             );
 
-            const pending_connect = self.pending_action == .connect and
+            const pending_connect = (self.pending_action == .connect or
+                self.pending_action == .connect_new) and
                 self.pendingSsidMatches(network.ssid);
             const pending_disconnect = self.pending_action == .disconnect and network.connected;
             const status_text = if (pending_connect)
@@ -541,6 +578,113 @@ pub const Wifi = struct {
                 network.strength,
             );
         }
+    }
+
+    fn drawPasswordModal(
+        self: *Wifi,
+        s: *session.Session,
+        canvas: *render.Canvas,
+        output_scale: i32,
+        font_scale: f32,
+        text_height: i32,
+    ) void {
+        const m = s.metrics;
+        const cfg = s.cfg;
+        const width: i32 = @intCast(s.client.logical_width);
+        const height: i32 = @intCast(s.client.logical_height);
+        const box_w = @min(@max(0, width - m.margin * 2), ui.scaled(420, m.scale));
+        const box_h = ui.scaled(156, m.scale);
+        const box_x = @divTrunc(width - box_w, 2);
+        const box_y = @divTrunc(height - box_h, 2);
+        const border = m.border_width;
+
+        canvas.fillRect(
+            0,
+            0,
+            ui.px(width, output_scale),
+            ui.px(height, output_scale),
+            render.Color{ .r = 0, .g = 0, .b = 0, .a = 150 },
+        );
+        canvas.roundRect(
+            ui.px(box_x, output_scale),
+            ui.px(box_y, output_scale),
+            ui.px(box_w, output_scale),
+            ui.px(box_h, output_scale),
+            ui.px(m.corner_radius, output_scale),
+            cfg.highlight_mid,
+        );
+        canvas.roundRect(
+            ui.px(box_x + border, output_scale),
+            ui.px(box_y + border, output_scale),
+            ui.px(@max(0, box_w - border * 2), output_scale),
+            ui.px(@max(0, box_h - border * 2), output_scale),
+            ui.px(@max(0, m.corner_radius - border), output_scale),
+            cfg.surface,
+        );
+
+        const content_x = box_x + m.margin;
+        const content_w = @max(0, box_w - m.margin * 2);
+        const title_y = box_y + m.margin;
+        var title_buffer: [160]u8 = undefined;
+        const title = std.fmt.bufPrint(
+            &title_buffer,
+            "Connect to {s}",
+            .{self.password_ssid[0..self.password_ssid_len]},
+        ) catch "Connect";
+        _ = canvas.textFit(
+            ui.px(content_x, output_scale),
+            ui.px(title_y, output_scale),
+            title,
+            cfg.text,
+            font_scale,
+            ui.px(content_w, output_scale),
+        );
+
+        const field_h = ui.scaled(30, m.scale);
+        const field_y = title_y + text_height + m.small_margin * 2;
+        canvas.roundRect(
+            ui.px(content_x, output_scale),
+            ui.px(field_y, output_scale),
+            ui.px(content_w, output_scale),
+            ui.px(field_h, output_scale),
+            ui.px(m.row_radius, output_scale),
+            cfg.highlight_low,
+        );
+
+        var masked: [129]u8 = undefined;
+        @memset(masked[0..self.password_len], '*');
+        var masked_len = self.password_len;
+        if (s.blink_on) {
+            masked[masked_len] = '_';
+            masked_len += 1;
+        }
+        const field_text: []const u8 = if (self.password_len == 0 and !s.blink_on)
+            "Password"
+        else
+            masked[0..masked_len];
+        _ = canvas.textFit(
+            ui.px(content_x + m.small_margin, output_scale),
+            ui.px(field_y, output_scale) + @divTrunc(ui.px(field_h, output_scale) - text_height, 2),
+            field_text,
+            if (self.password_len == 0) cfg.muted else cfg.text,
+            font_scale,
+            ui.px(@max(0, content_w - m.small_margin * 2), output_scale),
+        );
+
+        const hint_scale = font_scale * 0.85;
+        const hint_y = field_y + field_h + m.small_margin * 2;
+        const hint = if (self.password_error)
+            "Password cannot be empty"
+        else
+            "Enter connect   N / Esc cancel";
+        _ = canvas.textFit(
+            ui.px(content_x, output_scale),
+            ui.px(hint_y, output_scale),
+            hint,
+            if (self.password_error) cfg.warm_2 else cfg.muted,
+            hint_scale,
+            ui.px(content_w, output_scale),
+        );
     }
 
     fn drawError(
@@ -736,17 +880,130 @@ pub const Wifi = struct {
             s.dirty = true;
             return;
         }
-        const saved = state.findSaved(network.ssid) orelse {
-            self.setNotice("No saved profile for this network");
-            s.dirty = true;
-            return;
-        };
         const device = state.device orelse {
             self.setNotice("No Wi-Fi device");
             s.dirty = true;
             return;
         };
-        self.submitJob(.connect, device.path, network.ap_path, saved.path, true, network.ssid, s);
+        if (state.findSaved(network.ssid)) |saved| {
+            self.submitJob(.connect, device.path, network.ap_path, saved.path, true, network.ssid, s);
+            return;
+        }
+        if (network.secured) {
+            if (self.pending_action != null) {
+                self.setNotice("Action already in progress");
+                s.dirty = true;
+                return;
+            }
+            self.openPasswordModal(network.*, device, s);
+            return;
+        }
+        _ = self.submitNewConnection(device.path, network.ap_path, network.ssid, "", false, s);
+    }
+
+    fn openPasswordModal(
+        self: *Wifi,
+        network: wifi.Network,
+        device: wifi.Device,
+        s: *session.Session,
+    ) void {
+        if (network.ssid.len > self.password_ssid.len or
+            network.ap_path.len > self.password_ap.len or
+            device.path.len > self.password_device.len)
+        {
+            self.setNotice("Network name too long");
+            s.dirty = true;
+            return;
+        }
+
+        self.password_modal = true;
+        self.password_error = false;
+        self.password_len = 0;
+        @memset(self.password_buffer[0..], 0);
+        @memcpy(self.password_ssid[0..network.ssid.len], network.ssid);
+        self.password_ssid_len = network.ssid.len;
+        @memcpy(self.password_ap[0..network.ap_path.len], network.ap_path);
+        self.password_ap_len = network.ap_path.len;
+        @memcpy(self.password_device[0..device.path.len], device.path);
+        self.password_device_len = device.path.len;
+        s.dirty = true;
+    }
+
+    fn closePasswordModal(self: *Wifi, s: *session.Session) void {
+        self.password_modal = false;
+        self.password_error = false;
+        self.wipePassword();
+        s.dirty = true;
+    }
+
+    fn wipePassword(self: *Wifi) void {
+        @memset(self.password_buffer[0..], 0);
+        self.password_len = 0;
+    }
+
+    fn handlePasswordKey(
+        self: *Wifi,
+        s: *session.Session,
+        key: wayland.Key,
+        is_repeat: bool,
+    ) void {
+        if (key.keysym == ui.key_return or key.keysym == ui.key_kp_enter) {
+            if (!is_repeat) self.submitPassword(s);
+            return;
+        }
+        if (key.keysym == 'n' or key.keysym == 'N') {
+            if (!is_repeat) self.closePasswordModal(s);
+            return;
+        }
+        if (key.keysym == ui.key_backspace) {
+            self.backspacePassword(s);
+            return;
+        }
+        if (key.text_len > 0) {
+            self.appendPassword(key.text[0..key.text_len], s);
+        }
+    }
+
+    fn appendPassword(self: *Wifi, text: []const u8, s: *session.Session) void {
+        if (text.len == 0 or self.password_len + text.len > self.password_buffer.len) return;
+        for (text) |byte| {
+            if (byte < 0x20 or byte == 0x7f) return;
+        }
+
+        @memcpy(self.password_buffer[self.password_len .. self.password_len + text.len], text);
+        self.password_len += text.len;
+        self.password_error = false;
+        s.dirty = true;
+    }
+
+    fn backspacePassword(self: *Wifi, s: *session.Session) void {
+        if (self.password_len == 0) return;
+        self.password_len -= 1;
+        while (self.password_len > 0 and
+            (self.password_buffer[self.password_len] & 0xc0) == 0x80)
+        {
+            self.password_len -= 1;
+        }
+        self.password_buffer[self.password_len] = 0;
+        self.password_error = false;
+        s.dirty = true;
+    }
+
+    fn submitPassword(self: *Wifi, s: *session.Session) void {
+        if (self.password_len == 0) {
+            self.password_error = true;
+            s.dirty = true;
+            return;
+        }
+
+        const device_path = self.password_device[0..self.password_device_len];
+        const ap_path = self.password_ap[0..self.password_ap_len];
+        const ssid = self.password_ssid[0..self.password_ssid_len];
+        const password = self.password_buffer[0..self.password_len];
+
+        if (self.submitNewConnection(device_path, ap_path, ssid, password, true, s)) {
+            self.closePasswordModal(s);
+        }
     }
 
     fn disconnect(self: *Wifi, s: *session.Session) void {
@@ -777,6 +1034,62 @@ pub const Wifi = struct {
     fn toggleWireless(self: *Wifi, s: *session.Session) void {
         const state = if (self.state) |*value| value else return;
         self.submitJob(.wireless, "", "", "", !state.wireless_enabled, "", s);
+    }
+
+    fn submitNewConnection(
+        self: *Wifi,
+        device_path: []const u8,
+        ap_path: []const u8,
+        ssid: []const u8,
+        password: []const u8,
+        secured: bool,
+        s: *session.Session,
+    ) bool {
+        if (self.worker == null) {
+            self.setNotice("Wi-Fi unavailable");
+            s.dirty = true;
+            return false;
+        }
+        if (self.pending_action != null) {
+            self.setNotice("Action already in progress");
+            s.dirty = true;
+            return false;
+        }
+        if (device_path.len > 256 or ap_path.len > 256 or ssid.len > 128 or
+            password.len > 128)
+        {
+            self.setNotice("Network name or password too long");
+            s.dirty = true;
+            return false;
+        }
+
+        var job = worker_mod.Job{
+            .kind = .connect_new,
+            .device_len = device_path.len,
+            .ap_len = ap_path.len,
+            .ssid_len = ssid.len,
+            .password_len = password.len,
+            .value = secured,
+        };
+        @memcpy(job.device_path[0..device_path.len], device_path);
+        @memcpy(job.ap_path[0..ap_path.len], ap_path);
+        @memcpy(job.ssid[0..ssid.len], ssid);
+        @memcpy(job.password[0..password.len], password);
+
+        self.worker.?.submit(job) catch |err| {
+            job.clearSecret();
+            self.setError("Wi-Fi action failed", err);
+            s.dirty = true;
+            return false;
+        };
+
+        self.pending_action = .connect_new;
+        self.pending_ssid_len = ssid.len;
+        @memcpy(self.pending_ssid[0..ssid.len], ssid);
+        self.error_len = 0;
+        self.error_deadline_ms = 0;
+        s.dirty = true;
+        return true;
     }
 
     fn submitJob(
