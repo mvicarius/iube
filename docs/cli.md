@@ -71,14 +71,15 @@ Paired	Keyboard	11:22:33:44:55:66
 | `iube wifi on\|off\|toggle` | Toggle NetworkManager wireless. |
 | `iube wifi scan` | Request a scan, wait briefly, refresh and print networks. |
 | `iube wifi list` | Print the current wireless state and networks. |
-| `iube wifi connect <ssid>` | Connect to an existing saved profile. |
+| `iube wifi connect <ssid>` | Connect to a saved profile, or create one and prompt for a password. |
 | `iube wifi disconnect` | Disconnect the wireless device. |
 
-`connect` never prompts for a password and never creates a profile. The SSID
-must already be saved in NetworkManager; otherwise the command exits nonzero.
-If the access point is not in the current scan results, NetworkManager is asked
-to choose one for the saved profile. Run `iube wifi scan` first when the network
-has not been seen recently.
+`connect` first looks for a saved NetworkManager profile. If one exists, it is
+activated even when the access point is not in the current scan results. If the
+network is visible and has no saved profile, iube creates a new WPA2-PSK or open
+profile. Secured networks prompt for the password on stdin; `--password-stdin`
+is accepted as an explicit synonym. Passwords are never accepted in argv and
+the transient buffer is wiped after the request.
 
 `scan` waits 1.5 seconds for NetworkManager to collect results before printing
 them. The scan itself is rate-limited by the kernel and by NetworkManager.
@@ -165,8 +166,8 @@ handlers such as `on-click`, not in a polling command.
 - Audio volume is limited to 0-100% even though PulseAudio allows up to 150%.
 - Bluetooth actions use the first adapter only. Pairing, discovery filters and
   device removal are not part of this command grammar.
-- Wi-Fi actions require NetworkManager. Connecting to a network without a saved
-  profile, entering passphrases, and creating a profile are not supported.
+- Wi-Fi actions require NetworkManager. New profiles are limited to open and
+  WPA2-PSK networks; WPA3/SAE, enterprise and hidden networks are not supported.
 - Power profiles are limited to low-power/power-saver, balanced and performance
   and must exist in the active backend.
 - `power battery` reports the first system battery, matching the power view.

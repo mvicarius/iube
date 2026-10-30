@@ -208,7 +208,10 @@ fn parseWifi(rest: []const []const u8) ParseError!Action {
     }
     if (std.mem.eql(u8, action, "connect")) {
         if (rest.len < 2) return error.MissingArgument;
-        if (rest.len > 2) return error.TooManyArguments;
+        if (rest.len > 3) return error.TooManyArguments;
+        if (rest.len == 3 and !std.mem.eql(u8, rest[2], "--password-stdin")) {
+            return error.InvalidArgument;
+        }
         return .{ .wifi_connect = rest[1] };
     }
     if (std.mem.eql(u8, action, "disconnect")) {
@@ -493,27 +496,118 @@ fn wifiConnect(init: std.process.Init, ssid: []const u8) !void {
     defer state.deinit();
 
     const device = state.device orelse return error.NoWifiDevice;
-    const saved = state.findSaved(ssid) orelse return error.NoSavedProfile;
 
-    // NetworkManager accepts "/" as "let me pick the access point"; use it
-    // when the saved network is not in the current scan results.
-    var ap_path: []const u8 = "/";
+    var visible: ?wifi.Network = null;
     for (state.networks) |network| {
         if (std.mem.eql(u8, network.ssid, ssid)) {
-            ap_path = network.ap_path;
+            visible = network;
             break;
         }
     }
-    const network = wifi.Network{
-        .ap_path = ap_path,
-        .ssid = ssid,
-        .strength = 0,
-        .frequency = 0,
-        .secured = false,
-        .connected = false,
-    };
-    try client.activateSaved(device, network, saved);
+
+    if (visible) |network| {
+        if (network.connected) {
+            printOut(init.io, "Already connected to {s}\n", .{ssid});
+            return;
+        }
+
+        if (state.findSaved(network.ssid)) |saved| {
+            try client.activateSaved(device, network, saved);
+        } else {
+            var password_buffer: [256]u8 = undefined;
+            var password: []const u8 = "";
+            if (network.secured) {
+                printErr(init.io, "Password: ", .{});
+                password = readPassword(init.io, &password_buffer) catch return error.PasswordReadFailed;
+                printErr(init.io, "\n", .{});
+                if (password.len == 0) {
+                    @memset(password_buffer[0..], 0);
+                    return error.EmptyPassword;
+                }
+            }
+
+            const result = client.addAndActivate(device, network, password);
+            @memset(password_buffer[0..], 0);
+            try result;
+        }
+    } else {
+        // NetworkManager accepts "/" as "let me pick the access point". This
+        // lets a saved profile connect even when scan results are stale.
+        const saved = state.findSaved(ssid) orelse return error.NetworkNotFound;
+        const network = wifi.Network{
+            .ap_path = "/",
+            .ssid = ssid,
+            .strength = 0,
+            .frequency = 0,
+            .secured = false,
+            .connected = false,
+        };
+        try client.activateSaved(device, network, saved);
+    }
+
     printOut(init.io, "Connecting to {s}\n", .{ssid});
+    if (!waitForActivation(init.io, init.gpa, &client, ssid)) {
+        return error.ConnectionTimedOut;
+    }
+    printOut(init.io, "Connected\n", .{});
+}
+
+fn waitForActivation(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    client: *wifi.Client,
+    ssid: []const u8,
+) bool {
+    var waited_ms: u32 = 0;
+    // NM_DEVICE_STATE_ACTIVATED is 100 and NM_DEVICE_STATE_FAILED is 120.
+    while (waited_ms < 10_000) : (waited_ms += 500) {
+        std.Io.sleep(io, .fromMilliseconds(500), .awake) catch {};
+
+        var state = client.refresh(gpa) catch continue;
+        defer state.deinit();
+        const device = state.device orelse continue;
+        if (device.state == 120) return false;
+        if (device.state == 100) {
+            for (state.networks) |network| {
+                if (network.connected and std.mem.eql(u8, network.ssid, ssid)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+/// Read one line from stdin, disabling terminal echo when stdin is a TTY.
+/// Passwords are never accepted in argv, and the caller wipes the buffer.
+fn readPassword(io: std.Io, buffer: []u8) ![]const u8 {
+    const fd = std.posix.STDIN_FILENO;
+    const original = std.posix.tcgetattr(fd) catch null;
+    if (original) |term| {
+        var hidden = term;
+        hidden.lflag.ECHO = false;
+        std.posix.tcsetattr(fd, .NOW, hidden) catch {};
+        defer std.posix.tcsetattr(fd, .NOW, term) catch {};
+        return readLine(io, buffer);
+    }
+    return readLine(io, buffer);
+}
+
+fn readLine(io: std.Io, buffer: []u8) ![]const u8 {
+    const file = std.Io.File.stdin();
+    var len: usize = 0;
+    while (len < buffer.len) {
+        const count = file.readStreaming(io, &.{buffer[len..]}) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        if (count == 0) break;
+        if (std.mem.indexOfScalar(u8, buffer[len .. len + count], '\n')) |newline| {
+            len += newline;
+            break;
+        }
+        len += count;
+    }
+    if (len > 0 and buffer[len - 1] == '\r') len -= 1;
+    return buffer[0..len];
 }
 
 fn wifiDisconnect(init: std.process.Init) !void {
@@ -673,6 +767,9 @@ fn failureMessage(err: anyerror) []const u8 {
         error.NotConnected => "not connected",
         error.ProfileUnavailable => "power profiles are not available",
         error.ProfileNotAvailable => "that power profile is not available",
+        error.EmptyPassword => "password cannot be empty",
+        error.PasswordReadFailed => "could not read password",
+        error.ConnectionTimedOut => "connection timed out",
         error.AccessDenied => "permission denied",
         error.Timeout => "the system service timed out",
         error.ConnectionRefused => "the system service is not running",
@@ -756,6 +853,9 @@ test "parse wifi actions" {
 
     var connect = [_][]const u8{ "connect", "Home" };
     try std.testing.expectEqualStrings("Home", (try parse("wifi", &connect)).wifi_connect);
+
+    var connect_stdin = [_][]const u8{ "connect", "Home", "--password-stdin" };
+    try std.testing.expectEqualStrings("Home", (try parse("wifi", &connect_stdin)).wifi_connect);
 
     var scan = [_][]const u8{"scan"};
     try std.testing.expectEqual(Action.wifi_scan, try parse("wifi", &scan));

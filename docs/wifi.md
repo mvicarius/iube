@@ -101,8 +101,8 @@ the network list grows.
   seconds and refreshes after actions; press `R` for an immediate refresh.
 - Forget, hidden-network and enterprise flows are not exposed.
 - Only the first wireless device is displayed.
-- The password prompt reserves uppercase `N` for cancel, so a password
-  containing `N` cannot be entered from the UI. Use `iube wifi connect <ssid>`
+- The password prompt reserves `n` and `N` for cancel, so a password containing
+  those letters cannot be entered from the UI. Use `iube wifi connect <ssid>`
   for such a password.
 - NetworkManager must be running and must manage the interface. The direct
   nl80211 and wpa_supplicant path described in [tools.md](tools.md) is not
