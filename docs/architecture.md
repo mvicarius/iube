@@ -14,11 +14,13 @@ iube audio              -> audio_view.Audio
 iube bluetooth          -> bluetooth_view.Bluetooth
 iube wifi               -> wifi_view.Wifi
 iube power              -> power_view.Power
+iube <tool> <action>    -> cli action, no Wayland connection
 iube help / version     -> text output, no Wayland connection
 ```
 
 `src/main.zig` is only dispatch. It does not load `.desktop` files, build tool
-metadata, or create a window itself.
+metadata, or create a window itself. Action paths run before the config or
+Wayland session is set up.
 
 ## Module layout
 
@@ -40,6 +42,7 @@ src/
   wifi.zig         NetworkManager device, access point and profile model over D-Bus
   power_view.zig   power controller: battery, profiles and session actions
   power.zig        sysfs power supply, platform profile and logind client
+  cli.zig          non-UI actions for keybinds and status bars
   dbus.zig         minimal system D-Bus client (no libdbus)
 
   placeholder.zig  "coming soon" view for unfinished tools

@@ -45,7 +45,8 @@ Hyprland, on a 1920×1080 output at 1× scale.
 More information about each feature lives in the [docs](docs) folder:
 [launcher](docs/launcher.md), [audio](docs/audio.md),
 [Bluetooth](docs/bluetooth.md), [Wi-Fi](docs/wifi.md),
-[Power](docs/power.md), [architecture](docs/architecture.md), and
+[Power](docs/power.md), [CLI actions](docs/cli.md),
+[architecture](docs/architecture.md), and
 [planned backends](docs/tools.md).
 
 ## Design goals and philosophy
@@ -94,7 +95,8 @@ zig build --release=fast
 ```
 
 With no arguments the built binary opens the control panel. Use
-`./zig-out/bin/iube launch` for the application launcher.
+`./zig-out/bin/iube launch` for the application launcher. Every tool also has
+non-UI actions for keybinds and status bars; see [docs/cli.md](docs/cli.md).
 
 ### With Nix
 
