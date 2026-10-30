@@ -33,8 +33,8 @@ does not replace `bluetoothd`.
 - `Esc` closes.
 
 The header shows the adapter name and its current state: `On`, `Off`, or
-`Discovering`. Device rows show the name, address, and whether the device is
-`Connected`, `Paired`, or `Available`, with battery percentage when available.
+`Discovering`. Device rows show the name, address, connection state, and compact
+bars for signal strength and battery life when BlueZ provides those values.
 
 ## Current limitations
 

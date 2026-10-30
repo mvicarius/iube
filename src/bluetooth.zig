@@ -40,17 +40,10 @@ pub const Device = struct {
         return self.path;
     }
 
-    pub fn status(self: Device, buffer: []u8) []const u8 {
-        const base = if (self.connected)
-            "Connected"
-        else if (self.paired)
-            "Paired"
-        else
-            "Available";
-        if (self.battery) |battery| {
-            return std.fmt.bufPrint(buffer, "{s} {d}%", .{ base, battery }) catch base;
-        }
-        return base;
+    pub fn stateLabel(self: Device) []const u8 {
+        if (self.connected) return "Connected";
+        if (self.paired) return "Paired";
+        return "Available";
     }
 };
 
@@ -296,7 +289,7 @@ fn finishArray(reader: *dbus.Reader, end: usize) !void {
     reader.index = end;
 }
 
-test "device status reports connection and battery" {
+test "device state and label" {
     const device = Device{
         .path = "/org/bluez/hci0/dev_TEST",
         .adapter_path = "/org/bluez/hci0",
@@ -307,7 +300,6 @@ test "device status reports connection and battery" {
         .battery = 55,
     };
 
-    var buffer: [48]u8 = undefined;
-    try std.testing.expectEqualStrings("Connected 55%", device.status(&buffer));
+    try std.testing.expectEqualStrings("Connected", device.stateLabel());
     try std.testing.expectEqualStrings("Test device", device.label());
 }

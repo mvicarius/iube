@@ -9,6 +9,7 @@ const std = @import("std");
 const wayland = @import("wayland.zig");
 const render = @import("render.zig");
 const font = @import("font.zig");
+const config = @import("config.zig");
 const ui = @import("ui.zig");
 const session = @import("session.zig");
 const bluetooth = @import("bluetooth.zig");
@@ -582,13 +583,13 @@ pub const Bluetooth = struct {
             );
 
             const text_top = row_y_px + @divTrunc(row_height_px - text_block, 2);
+            const secondary_y = text_top + text_height + line_gap;
             const name_x = ui.px(
                 geometry.x + m.small_margin + m.icon_size + m.small_margin * 2,
                 output_scale,
             );
 
-            var status_buffer: [48]u8 = undefined;
-            const status_text = device.status(&status_buffer);
+            const status_text = device.stateLabel();
             const status_color = if (device.connected)
                 cfg.accent
             else if (device.paired)
@@ -596,9 +597,38 @@ pub const Bluetooth = struct {
             else
                 cfg.muted;
             const status_width = font.textWidth(status_text, font_scale);
-            const status_x = ui.px(geometry.x + geometry.w - m.small_margin, output_scale) -
-                status_width;
-            const name_width = @max(0, status_x - margin_px - name_x);
+            const right_edge = ui.px(geometry.x + geometry.w - m.small_margin, output_scale);
+            const status_x = right_edge - status_width;
+
+            const metric_scale = font_scale * 0.8;
+            const metric_height = ui.textHeight(metric_scale);
+            const bar_width = ui.px(ui.scaled(34, m.scale), output_scale);
+            const bar_height = @max(2, ui.px(ui.scaled(4, m.scale), output_scale));
+            const item_gap = @divTrunc(margin_px, 2);
+
+            var signal_buffer: [16]u8 = undefined;
+            var battery_buffer: [16]u8 = undefined;
+            const signal_text = if (device.rssi) |rssi|
+                std.fmt.bufPrint(&signal_buffer, "{d}", .{rssi}) catch "--"
+            else
+                "--";
+            const battery_text = if (device.battery) |battery|
+                std.fmt.bufPrint(&battery_buffer, "{d}%", .{battery}) catch "--"
+            else
+                "--";
+
+            const signal_label_width = font.textWidth("Signal", metric_scale);
+            const battery_label_width = font.textWidth("Battery", metric_scale);
+            const signal_value_width = font.textWidth(signal_text, metric_scale);
+            const battery_value_width = font.textWidth(battery_text, metric_scale);
+            const signal_block_width = signal_label_width + item_gap + bar_width +
+                item_gap + signal_value_width;
+            const battery_block_width = battery_label_width + item_gap + bar_width +
+                item_gap + battery_value_width;
+            const metrics_width = signal_block_width + margin_px + battery_block_width;
+            const metrics_x = right_edge - metrics_width;
+            const right_limit = @min(status_x, metrics_x);
+            const name_width = @max(0, right_limit - margin_px - name_x);
 
             _ = canvas.textFit(
                 name_x,
@@ -610,7 +640,7 @@ pub const Bluetooth = struct {
             );
             _ = canvas.textFit(
                 name_x,
-                text_top + text_height + line_gap,
+                secondary_y,
                 device.address,
                 cfg.detail_2,
                 secondary_scale,
@@ -618,10 +648,41 @@ pub const Bluetooth = struct {
             );
             _ = canvas.text(
                 status_x,
-                row_y_px + @divTrunc(row_height_px - text_height, 2),
+                text_top,
                 status_text,
                 status_color,
                 font_scale,
+            );
+
+            var metric_x = metrics_x;
+            drawMetric(
+                canvas,
+                metric_x,
+                secondary_y,
+                metric_scale,
+                metric_height,
+                bar_width,
+                bar_height,
+                item_gap,
+                "Signal",
+                signal_text,
+                rssiPercent(device.rssi),
+                cfg,
+            );
+            metric_x += signal_block_width + margin_px;
+            drawMetric(
+                canvas,
+                metric_x,
+                secondary_y,
+                metric_scale,
+                metric_height,
+                bar_width,
+                bar_height,
+                item_gap,
+                "Battery",
+                battery_text,
+                device.battery orelse 0,
+                cfg,
             );
         }
     }
@@ -707,6 +768,61 @@ const ListGeometry = struct {
     w: i32,
     h: i32,
 };
+
+fn rssiPercent(rssi: ?i16) u8 {
+    const value = rssi orelse return 0;
+    const clamped: i32 = std.math.clamp(@as(i32, value), -100, -30);
+    return @intCast(@divTrunc((clamped + 100) * 100, 70));
+}
+
+fn drawMetric(
+    canvas: *render.Canvas,
+    x: i32,
+    y: i32,
+    glyph_scale: f32,
+    text_height: i32,
+    bar_width: i32,
+    bar_height: i32,
+    gap: i32,
+    label: []const u8,
+    value: []const u8,
+    percent: u8,
+    cfg: config.Config,
+) void {
+    _ = canvas.text(x, y, label, cfg.muted, glyph_scale);
+
+    const bar_x = x + font.textWidth(label, glyph_scale) + gap;
+    const bar_y = y + @divTrunc(text_height - bar_height, 2);
+    canvas.roundRect(
+        bar_x,
+        bar_y,
+        bar_width,
+        bar_height,
+        @divTrunc(bar_height, 2),
+        cfg.highlight_low,
+    );
+
+    const filled = @divTrunc(bar_width * @as(i32, percent), 100);
+    if (filled > 0) {
+        canvas.roundRectGradient(
+            bar_x,
+            bar_y,
+            bar_width,
+            bar_height,
+            @divTrunc(bar_height, 2),
+            filled,
+            &.{ cfg.warm_2, cfg.warm_1, cfg.accent },
+        );
+    }
+
+    _ = canvas.text(
+        bar_x + bar_width + gap,
+        y,
+        value,
+        cfg.detail_2,
+        glyph_scale,
+    );
+}
 
 fn appInitial(name: []const u8) []const u8 {
     if (name.len == 0) return "?";
