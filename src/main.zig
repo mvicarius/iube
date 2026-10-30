@@ -246,7 +246,7 @@ fn runWifiConnect(init: std.process.Init, args: []const []const u8) !void {
     }
 
     printStdout(init.io, "Connecting...\n");
-    if (!waitForActivation(init.io, init.gpa, &client, target.ap_path)) {
+    if (!waitForActivation(init.io, init.gpa, &client, target.ssid)) {
         std.debug.print("iube: connection failed or timed out\n", .{});
         std.process.exit(1);
     }
@@ -257,7 +257,7 @@ fn waitForActivation(
     io: std.Io,
     gpa: std.mem.Allocator,
     client: *wifi.Client,
-    ap_path: []const u8,
+    ssid: []const u8,
 ) bool {
     var waited_ms: u32 = 0;
     // NM_DEVICE_STATE_ACTIVATED is 100 and NM_DEVICE_STATE_FAILED is 120.
@@ -268,7 +268,11 @@ fn waitForActivation(
         defer state.deinit();
         const device = state.device orelse continue;
         if (device.state == 120) return false;
-        if (device.state == 100) return std.mem.eql(u8, device.active_ap, ap_path);
+        if (device.state == 100) {
+            for (state.networks) |network| {
+                if (network.connected and std.mem.eql(u8, network.ssid, ssid)) return true;
+            }
+        }
     }
     return false;
 }

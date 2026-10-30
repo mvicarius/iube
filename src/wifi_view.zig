@@ -951,7 +951,7 @@ pub const Wifi = struct {
             if (!is_repeat) self.submitPassword(s);
             return;
         }
-        if (key.keysym == 'N') {
+        if (key.keysym == 'n' or key.keysym == 'N') {
             if (!is_repeat) self.closePasswordModal(s);
             return;
         }
