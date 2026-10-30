@@ -65,7 +65,7 @@ fcft).
 
 **Measurement notes.** Five runs after one warm-up, on Hyprland 0.55 with a
 2560×1600 output at 1.25× scale, using the compositor's `openlayer` event and
-`ps -o rss`. iube was built with `-Doptimize=ReleaseFast`; the other launchers
+`ps -o rss`. iube was built with `--release=fast`; the other launchers
 were their Nixpkgs release builds. All used their default configuration, with
 no tuning applied. RSS is summed per process, so multi-process launchers count
 shared library pages once per process. Values vary with the number of installed

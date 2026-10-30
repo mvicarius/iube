@@ -13,7 +13,8 @@ you give the command, and iube carries it out.
 
 - Classical Latin: **[ˈjʊ.beː]** — roughly **YOO-beh**, with a short *u* and a
   long final *e*.
-- Common English approximation: **/ˈjuːbeɪ/** — **YOO-bay**.
+
+## What is iube?
 
 iube is a small, dependency-light control panel for the Linux desktop. It opens
 fast, draws its own UI, and keeps nothing running in the background.
@@ -134,14 +135,14 @@ The measurements, configuration reference and implementation notes now live in
 For a normal release build:
 
 ```sh
-nix develop --command zig build -Doptimize=ReleaseFast
+nix develop --command zig build --release=fast
 ./zig-out/bin/iube
 ```
 
 Or, to build and run in one step:
 
 ```sh
-nix develop --command zig build run -Doptimize=ReleaseFast
+nix develop --command zig build run --release=fast
 ```
 
 With no arguments the installed binary opens the control panel. Use
@@ -149,7 +150,7 @@ With no arguments the installed binary opens the control panel. Use
 
 A plain `zig build` produces a Debug build. It is fine while developing, but
 uses more memory. The launcher figures in [docs/launcher.md](docs/launcher.md)
-are from a ReleaseFast build.
+are from a `--release=fast` build.
 
 The build needs `wayland` and `libxkbcommon` development headers. The generated
 protocol bindings for `wlr-layer-shell` and `cursor-shape` are checked into
