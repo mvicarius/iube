@@ -28,12 +28,12 @@ window setup.
 
 | Tool | Command | Preview | Open | Peak RSS |
 | --- | --- | --- | ---: | ---: |
-| Control panel | `iube` | <img src="docs/screenshot-panel.png" width="280" alt="Control panel"> | 5.4 ms | 14.2 MB |
-| Application launcher | `iube launch` | <img src="docs/screenshot.png" width="280" alt="Application launcher"> | 9.6 ms | 14.3 MB |
-| Audio | `iube audio` | <img src="docs/screenshot-audio.png" width="280" alt="Audio controller"> | 9.5 ms | 14.3 MB |
-| Bluetooth | `iube bluetooth` | <img src="docs/screenshot-bluetooth.png" width="280" alt="Bluetooth controller"> | 7.9 ms | 14.3 MB |
-| Wi-Fi | `iube wifi` | <img src="docs/screenshot-wifi.png" width="280" alt="Wi-Fi controller"> | 11.7 ms | 14.0 MB |
-| Power | `iube power` | n/a | n/a | n/a |
+| Control panel | `iube` | <img src="docs/screenshot-panel.png" width="280" alt="Control panel"> | 5.0 ms | 14.4 MB |
+| Application launcher | `iube launch` | <img src="docs/screenshot.png" width="280" alt="Application launcher"> | 9.4 ms | 14.4 MB |
+| Audio | `iube audio` | <img src="docs/screenshot-audio.png" width="280" alt="Audio controller"> | 9.6 ms | 14.4 MB |
+| Bluetooth | `iube bluetooth` | <img src="docs/screenshot-bluetooth.png" width="280" alt="Bluetooth controller"> | 7.4 ms | 14.4 MB |
+| Wi-Fi | `iube wifi` | <img src="docs/screenshot-wifi.png" width="280" alt="Wi-Fi controller"> | 9.6 ms | 14.4 MB |
+| Power | `iube power` | <img src="docs/screenshot-power.png" width="280" alt="Power controller"> | 16.0 ms | 14.4 MB |
 
 Measurements are produced by [docs/measure.py](docs/measure.py). The script runs
 five measurements after one warm-up. Open time is measured from process start to
@@ -45,7 +45,8 @@ Hyprland, on a 1920×1080 output at 1× scale.
 More information about each feature lives in the [docs](docs) folder:
 [launcher](docs/launcher.md), [audio](docs/audio.md),
 [Bluetooth](docs/bluetooth.md), [Wi-Fi](docs/wifi.md),
-[architecture](docs/architecture.md), and [planned backends](docs/tools.md).
+[Power](docs/power.md), [architecture](docs/architecture.md), and
+[planned backends](docs/tools.md).
 
 ## Design goals and philosophy
 

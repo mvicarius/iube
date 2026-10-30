@@ -60,7 +60,7 @@ pub const all = [_]Tool{
         .id = "power",
         .name = "Power",
         .description = "Battery, power profiles, suspend and session actions.",
-        .status = .coming_soon,
+        .status = .available,
         .backend = "sysfs power_supply/platform_profile and logind over D-Bus.",
         .icon = @embedFile("icons/power-off.png"),
     },

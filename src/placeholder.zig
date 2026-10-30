@@ -1,8 +1,8 @@
 //! Placeholder view for tools whose backend has not been implemented yet.
 //!
-//! It still uses the shared configuration, renderer and window behaviour, so
-//! `iube audio`, `iube bluetooth`, `iube wifi` and `iube power` already open a
-//! real iube window. Only the tool-specific data and controls are missing.
+//! Every registry entry currently has a real view, so this is kept for future
+//! tools. It still uses the shared configuration, renderer and window behaviour,
+//! so a new tool opens a real iube window before its backend lands.
 
 const std = @import("std");
 const wayland = @import("wayland.zig");

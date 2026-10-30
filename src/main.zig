@@ -5,7 +5,7 @@
 //!
 //!   iube          -> control panel (no .desktop scan)
 //!   iube launch   -> launcher (no control panel setup)
-//!   iube <tool>   -> tool view (currently a coming-soon placeholder)
+//!   iube <tool>   -> tool view
 
 const std = @import("std");
 const config = @import("config.zig");
@@ -16,6 +16,7 @@ const placeholder = @import("placeholder.zig");
 const audio_view = @import("audio_view.zig");
 const bluetooth_view = @import("bluetooth_view.zig");
 const wifi_view = @import("wifi_view.zig");
+const power_view = @import("power_view.zig");
 const tools = @import("tools.zig");
 
 pub const std_options: std.Options = .{ .log_level = .warn };
@@ -28,8 +29,8 @@ const usage =
     \\  iube launch      open the application launcher
     \\  iube audio       open the audio manager
     \\  iube bluetooth   open the Bluetooth controller
-    \\  iube wifi        open the Wi-Fi manager (coming soon)
-    \\  iube power       open the power manager (coming soon)
+    \\  iube wifi        open the Wi-Fi manager
+    \\  iube power       open the power manager
     \\  iube help        show this help
     \\  iube version     show the version
     \\
@@ -63,6 +64,9 @@ pub fn main(init: std.process.Init) !void {
     }
     if (std.mem.eql(u8, command, "wifi")) {
         return runWifi(init, env);
+    }
+    if (std.mem.eql(u8, command, "power")) {
+        return runPower(init, env);
     }
     if (std.mem.eql(u8, command, "help") or
         std.mem.eql(u8, command, "--help") or
@@ -134,6 +138,13 @@ fn runBluetooth(init: std.process.Init, env: config.Env) !void {
 
 fn runWifi(init: std.process.Init, env: config.Env) !void {
     var view = wifi_view.Wifi.init(init.io, init.gpa);
+    defer view.deinit();
+
+    try session.run(init.io, init.gpa, env, &view);
+}
+
+fn runPower(init: std.process.Init, env: config.Env) !void {
+    var view = power_view.Power.init(init.io, init.gpa);
     defer view.deinit();
 
     try session.run(init.io, init.gpa, env, &view);
