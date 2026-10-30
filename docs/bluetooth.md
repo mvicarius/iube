@@ -37,11 +37,13 @@ two seconds. Otherwise it refreshes every five seconds so external connection
 changes are picked up without pressing `R`. Devices are ordered with connected
 devices first, paired devices second, and new/unpaired devices last.
 
-All BlueZ work runs on a long-lived worker D-Bus connection, so the window stays
-responsive. The selected device shows `Connecting...` or `Disconnecting...`
-until the action finishes, then the device tree refreshes automatically. The
-worker reconnects after a D-Bus timeout instead of leaving the connection in a
-partial-message state.
+Refresh, power, discovery, connect and disconnect jobs run on a long-lived
+worker D-Bus connection, so the window stays responsive. The selected device
+shows `Connecting...` or `Disconnecting...` until the action finishes, then the
+device tree refreshes automatically. The worker reconnects after a D-Bus timeout
+instead of leaving the connection in a partial-message state. Initial startup
+and an explicit reconnect perform one synchronous load before the window is
+shown.
 
 The header shows the adapter name and its current state: `On`, `Off`, or
 `Discovering`. Device rows show the name, address and connection state. Connected
