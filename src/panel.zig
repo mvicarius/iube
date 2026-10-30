@@ -180,21 +180,18 @@ pub const Panel = struct {
             const icon_x = ui.px(geometry.x + m.small_margin, output_scale);
             const icon_y = ui.px(row_y + m.small_margin, output_scale);
             const icon_px = ui.px(m.icon_size, output_scale);
-            canvas.roundRect(
-                icon_x,
-                icon_y,
-                icon_px,
-                icon_px,
-                ui.px(m.icon_radius, output_scale),
-                cfg.highlight_low,
-            );
 
             if (self.getIcon(index)) |image| {
-                const inner_px = @max(1, icon_px - ui.px(m.small_margin, output_scale));
-                const image_x = icon_x + @divTrunc(icon_px - inner_px, 2);
-                const image_y = icon_y + @divTrunc(icon_px - inner_px, 2);
-                canvas.imageTinted(image_x, image_y, inner_px, inner_px, image, cfg.detail);
+                canvas.imageTinted(icon_x, icon_y, icon_px, icon_px, image, cfg.detail);
             } else {
+                canvas.roundRect(
+                    icon_x,
+                    icon_y,
+                    icon_px,
+                    icon_px,
+                    ui.px(m.icon_radius, output_scale),
+                    cfg.highlight_low,
+                );
                 const initial = appInitial(tool.name);
                 const initial_width = font.textWidth(initial, font_scale);
                 _ = canvas.text(
