@@ -12,4 +12,5 @@ test {
     _ = @import("bluetooth.zig");
     _ = @import("wifi.zig");
     _ = @import("power.zig");
+    _ = @import("cli.zig");
 }

@@ -8,6 +8,7 @@
 //!   iube <tool>   -> tool view
 
 const std = @import("std");
+const cli = @import("cli.zig");
 const config = @import("config.zig");
 const session = @import("session.zig");
 const launcher = @import("launcher.zig");
@@ -31,6 +32,8 @@ const usage =
     \\  iube bluetooth   open the Bluetooth controller
     \\  iube wifi        open the Wi-Fi manager
     \\  iube power       open the power manager
+    \\  iube <tool> <action> [args]
+    \\                   run a non-UI action (see docs/cli.md)
     \\  iube help        show this help
     \\  iube version     show the version
     \\
@@ -40,6 +43,15 @@ const usage =
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+
+    // Action paths never construct a view: they exit before config, theme or
+    // Wayland setup. `iube <tool>` with no action still opens the UI below.
+    if (args.len > 2 and cli.isTool(args[1])) {
+        const code = cli.run(init, args);
+        if (code != 0) std.process.exit(code);
+        return;
+    }
+
     const env = config.Env{
         .home = init.environ_map.get("HOME"),
         .xdg_config_home = init.environ_map.get("XDG_CONFIG_HOME"),
