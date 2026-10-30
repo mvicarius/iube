@@ -214,10 +214,7 @@ fn handleKeyEvent(session: *Session, view: anytype, key: wayland.Key) void {
 }
 
 fn isRepeatable(key: wayland.Key) bool {
-    if (key.text_len > 0) return true;
-    return key.keysym == ui.key_backspace or
-        key.keysym == ui.key_up or
-        key.keysym == ui.key_down;
+    return ui.keyRepeats(key.keysym, key.text_len);
 }
 
 fn updateCursor(session: *Session, view: anytype) void {
