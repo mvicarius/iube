@@ -12,6 +12,8 @@ iube                    -> panel.Panel
 iube launch             -> launcher.Launcher
 iube audio              -> audio_view.Audio
 iube bluetooth          -> bluetooth_view.Bluetooth
+iube bluetooth pair     -> text output, no Wayland connection
+iube bluetooth forget   -> text output, no Wayland connection
 iube wifi               -> wifi_view.Wifi
 iube power              -> power_view.Power
 iube brightness         -> brightness_view.Brightness
@@ -37,6 +39,7 @@ src/
   audio.zig        PulseAudio native-protocol client (no libpulse)
   bluetooth_view.zig  Bluetooth controller: adapter and device list
   bluetooth_worker.zig  long-lived Bluetooth job worker
+  bluetooth_agent.zig  short-lived BlueZ pairing agent (org.bluez.Agent1)
   bluetooth.zig    BlueZ object model over D-Bus (no BlueZ client library)
   wifi_view.zig    Wi-Fi controller: network list, scan, connect, power
   wifi_worker.zig  long-lived Wi-Fi job worker
@@ -78,10 +81,11 @@ Every command uses:
   handling.
 
 Only the view differs. `audio_view.zig` additionally uses `audio.zig`,
-`bluetooth_view.zig` uses `bluetooth.zig` and `dbus.zig`, `wifi_view.zig` uses
-`wifi.zig` and `dbus.zig`, and `power_view.zig` uses `power.zig` and
-`dbus.zig`. `brightness_view.zig` uses `brightness.zig` and `dbus.zig`. These
-are specific to their tools but still linked without any new dependency.
+`bluetooth_view.zig` uses `bluetooth.zig`, `bluetooth_worker.zig` and
+`bluetooth_agent.zig`, `wifi_view.zig` uses `wifi.zig` and `dbus.zig`,
+`power_view.zig` uses `power.zig` and `dbus.zig`, and `brightness_view.zig`
+uses `brightness.zig` and `dbus.zig`. These are specific to their tools but
+still linked without any new dependency.
 
 ## View interface
 

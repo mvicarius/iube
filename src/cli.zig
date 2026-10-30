@@ -90,6 +90,8 @@ pub const Action = union(enum) {
     bluetooth_discover: OnOff,
     bluetooth_connect: []const u8,
     bluetooth_disconnect: []const u8,
+    bluetooth_pair: []const u8,
+    bluetooth_forget: []const u8,
     bluetooth_list,
     wifi_power: OnOff,
     wifi_scan,
@@ -179,6 +181,14 @@ fn parseBluetooth(rest: []const []const u8) ParseError!Action {
             .{ .bluetooth_connect = rest[1] }
         else
             .{ .bluetooth_disconnect = rest[1] };
+    }
+    if (std.mem.eql(u8, action, "pair") or std.mem.eql(u8, action, "forget")) {
+        if (rest.len < 2) return error.MissingArgument;
+        if (rest.len > 2) return error.TooManyArguments;
+        return if (std.mem.eql(u8, action, "pair"))
+            .{ .bluetooth_pair = rest[1] }
+        else
+            .{ .bluetooth_forget = rest[1] };
     }
     if (std.mem.eql(u8, action, "list")) {
         if (rest.len > 1) return error.TooManyArguments;
@@ -305,6 +315,8 @@ fn execute(init: std.process.Init, action: Action) !void {
         .bluetooth_discover => |state| try bluetoothDiscover(init, state),
         .bluetooth_connect => |query| try bluetoothConnection(init, query, true),
         .bluetooth_disconnect => |query| try bluetoothConnection(init, query, false),
+        .bluetooth_pair => |query| try bluetoothPair(init, query),
+        .bluetooth_forget => |query| try bluetoothForget(init, query),
         .bluetooth_list => try bluetoothList(init),
         .wifi_power => |state| try wifiPower(init, state),
         .wifi_scan => try wifiScan(init),
@@ -423,6 +435,41 @@ fn bluetoothConnection(init: std.process.Init, query: []const u8, connect: bool)
         if (connect) "Connected" else "Disconnected",
         device.label(),
     });
+}
+
+fn bluetoothPair(init: std.process.Init, query: []const u8) !void {
+    var client = try bluetooth.Client.connect(init.io, init.gpa);
+    defer client.deinit();
+    var state = try client.refresh(init.gpa);
+    defer state.deinit();
+
+    const adapter = state.adapter() orelse return error.NoAdapter;
+    if (!adapter.powered) return error.BluetoothAdapterOff;
+    const device = try resolveBluetooth(state.devices, query);
+    const outcome = try client.pair(device.path);
+    switch (outcome) {
+        .paired => printOut(init.io, "Paired \"{s}\" ({s})\n", .{ device.label(), device.address }),
+        .already_paired => printOut(init.io, "\"{s}\" ({s}) is already paired\n", .{ device.label(), device.address }),
+    }
+}
+
+fn bluetoothForget(init: std.process.Init, query: []const u8) !void {
+    var client = try bluetooth.Client.connect(init.io, init.gpa);
+    defer client.deinit();
+    var state = try client.refresh(init.gpa);
+    defer state.deinit();
+
+    const device = try resolveBluetooth(state.devices, query);
+    try client.removeDevice(device);
+    printOut(init.io, "Forgot \"{s}\" ({s})\n", .{ device.label(), device.address });
+}
+
+fn resolveBluetooth(devices: []const bluetooth.Device, query: []const u8) !bluetooth.Device {
+    return switch (bluetooth.resolveDevice(devices, query)) {
+        .found => |index| devices[index],
+        .ambiguous => error.AmbiguousDevice,
+        .not_found => error.BluetoothDeviceNotFound,
+    };
 }
 
 fn bluetoothList(init: std.process.Init) !void {
@@ -761,6 +808,15 @@ fn failureMessage(err: anyerror) []const u8 {
         error.AmbiguousDevice => "more than one audio device matches",
         error.NoAdapter => "no Bluetooth adapter",
         error.BluetoothDeviceNotFound => "Bluetooth device not found",
+        error.BluetoothAdapterOff => "Bluetooth adapter is off",
+        error.PasskeyRequired => "this device requires a passkey or PIN; only just-works pairing is supported",
+        error.PairRejected => "pairing was rejected; check that the device is in pairing mode",
+        error.PairTimedOut => "pairing timed out",
+        error.PairCancelled => "pairing was cancelled",
+        error.DeviceNotAvailable => "device is not available; put it in pairing mode",
+        error.AdapterNotReady => "Bluetooth adapter is not ready",
+        error.PairInProgress => "another pairing attempt is already in progress",
+        error.PairFailed => "pairing failed",
         error.NoWifiDevice => "no Wi-Fi device",
         error.NetworkNotFound => "network not found; run 'iube wifi scan' first",
         error.NoSavedProfile => "no saved Wi-Fi profile for that network",
@@ -845,6 +901,12 @@ test "parse bluetooth actions" {
 
     var list = [_][]const u8{"list"};
     try std.testing.expectEqual(Action.bluetooth_list, try parse("bluetooth", &list));
+
+    var pair = [_][]const u8{ "pair", "Keyboard" };
+    try std.testing.expectEqualStrings("Keyboard", (try parse("bluetooth", &pair)).bluetooth_pair);
+
+    var forget = [_][]const u8{ "forget", "AA:BB:CC:DD:EE:01" };
+    try std.testing.expectEqualStrings("AA:BB:CC:DD:EE:01", (try parse("bluetooth", &forget)).bluetooth_forget);
 }
 
 test "parse wifi actions" {

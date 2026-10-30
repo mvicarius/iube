@@ -27,6 +27,7 @@ pub const key_escape: u32 = 0xff1b;
 pub const key_return: u32 = 0xff0d;
 pub const key_kp_enter: u32 = 0xff8d;
 pub const key_backspace: u32 = 0xff08;
+pub const key_delete: u32 = 0xffff;
 pub const key_up: u32 = 0xff52;
 pub const key_down: u32 = 0xff54;
 pub const key_left: u32 = 0xff51;

@@ -32,6 +32,8 @@ const usage =
     \\  iube launch      open the application launcher
     \\  iube audio       open the audio manager
     \\  iube bluetooth   open the Bluetooth controller
+    \\  iube bluetooth pair <name|address>    pair a device
+    \\  iube bluetooth forget <name|address>  forget a device
     \\  iube wifi        open the Wi-Fi manager
     \\  iube power       open the power manager
     \\  iube brightness  open the brightness controller
