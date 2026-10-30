@@ -13,6 +13,8 @@ Icons used by iube:
   bluetooth.png    brands/bluetooth.svg
   wifi.png         solid/wifi.svg
   power-off.png    solid/power-off.svg
+  signal.png       solid/signal.svg
+  battery-half.png solid/battery-half.svg
 
 Changes: the original SVGs were rendered to 128x128 white PNGs on a
 transparent background. The renderer tints them with the active theme at

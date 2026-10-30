@@ -9,6 +9,7 @@ const std = @import("std");
 const wayland = @import("wayland.zig");
 const render = @import("render.zig");
 const font = @import("font.zig");
+const png = @import("png.zig");
 const config = @import("config.zig");
 const ui = @import("ui.zig");
 const session = @import("session.zig");
@@ -24,6 +25,8 @@ pub const Bluetooth = struct {
 
     client: ?bluetooth.Client = null,
     state: ?bluetooth.State = null,
+    signal_icon: ?png.Image = null,
+    battery_icon: ?png.Image = null,
 
     selected: usize = 0,
     hover: ?usize = null,
@@ -38,6 +41,8 @@ pub const Bluetooth = struct {
             .io = io,
             .gpa = gpa,
         };
+        view.signal_icon = png.decode(gpa, @embedFile("icons/signal.png")) catch null;
+        view.battery_icon = png.decode(gpa, @embedFile("icons/battery-half.png")) catch null;
         view.reload();
         return view;
     }
@@ -45,8 +50,12 @@ pub const Bluetooth = struct {
     pub fn deinit(self: *Bluetooth) void {
         if (self.client) |*client| client.deinit();
         if (self.state) |*state| state.deinit();
+        if (self.signal_icon) |*icon| icon.deinit(self.gpa);
+        if (self.battery_icon) |*icon| icon.deinit(self.gpa);
         self.client = null;
         self.state = null;
+        self.signal_icon = null;
+        self.battery_icon = null;
     }
 
     pub fn windowSize(self: *Bluetooth, metrics: ui.Metrics) ui.WindowSize {
@@ -602,30 +611,27 @@ pub const Bluetooth = struct {
 
             const metric_scale = font_scale * 0.8;
             const metric_height = ui.textHeight(metric_scale);
+            const icon_size = ui.px(ui.scaled(16, m.scale), output_scale);
             const bar_width = ui.px(ui.scaled(34, m.scale), output_scale);
             const bar_height = @max(2, ui.px(ui.scaled(4, m.scale), output_scale));
             const item_gap = @divTrunc(margin_px, 2);
 
-            var signal_buffer: [16]u8 = undefined;
-            var battery_buffer: [16]u8 = undefined;
-            const signal_text = if (device.rssi) |rssi|
-                std.fmt.bufPrint(&signal_buffer, "{d}", .{rssi}) catch "--"
+            const connected = device.connected;
+            const percent: u8 = if (connected)
+                device.battery orelse 0
             else
-                "--";
-            const battery_text = if (device.battery) |battery|
-                std.fmt.bufPrint(&battery_buffer, "{d}%", .{battery}) catch "--"
+                rssiPercent(device.rssi);
+            const has_value = if (connected)
+                device.battery != null
             else
-                "--";
-
-            const signal_label_width = font.textWidth("Signal", metric_scale);
-            const battery_label_width = font.textWidth("Battery", metric_scale);
-            const signal_value_width = font.textWidth(signal_text, metric_scale);
-            const battery_value_width = font.textWidth(battery_text, metric_scale);
-            const signal_block_width = signal_label_width + item_gap + bar_width +
-                item_gap + signal_value_width;
-            const battery_block_width = battery_label_width + item_gap + bar_width +
-                item_gap + battery_value_width;
-            const metrics_width = signal_block_width + margin_px + battery_block_width;
+                device.rssi != null;
+            var value_buffer: [8]u8 = undefined;
+            const value_text = if (has_value)
+                percentLabel(&value_buffer, percent)
+            else
+                "  --";
+            const value_width = font.textWidth(value_text, metric_scale);
+            const metrics_width = icon_size + item_gap + bar_width + item_gap + value_width;
             const metrics_x = right_edge - metrics_width;
             const right_limit = @min(status_x, metrics_x);
             const name_width = @max(0, right_limit - margin_px - name_x);
@@ -654,34 +660,21 @@ pub const Bluetooth = struct {
                 font_scale,
             );
 
-            var metric_x = metrics_x;
-            drawMetric(
+            drawDeviceMetric(
                 canvas,
-                metric_x,
+                metrics_x,
                 secondary_y,
+                icon_size,
                 metric_scale,
                 metric_height,
                 bar_width,
                 bar_height,
                 item_gap,
-                "Signal",
-                signal_text,
-                rssiPercent(device.rssi),
-                cfg,
-            );
-            metric_x += signal_block_width + margin_px;
-            drawMetric(
-                canvas,
-                metric_x,
-                secondary_y,
-                metric_scale,
-                metric_height,
-                bar_width,
-                bar_height,
-                item_gap,
-                "Battery",
-                battery_text,
-                device.battery orelse 0,
+                if (connected) self.battery_icon else self.signal_icon,
+                if (connected) cfg.detail_1 else cfg.accent,
+                if (connected) "B" else "S",
+                value_text,
+                percent,
                 cfg,
             );
         }
@@ -775,23 +768,42 @@ fn rssiPercent(rssi: ?i16) u8 {
     return @intCast(@divTrunc((clamped + 100) * 100, 70));
 }
 
-fn drawMetric(
+fn percentLabel(buffer: []u8, percent: u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "{d:>3}%", .{percent}) catch "???%";
+}
+
+fn drawDeviceMetric(
     canvas: *render.Canvas,
     x: i32,
     y: i32,
+    icon_size: i32,
     glyph_scale: f32,
     text_height: i32,
     bar_width: i32,
     bar_height: i32,
     gap: i32,
-    label: []const u8,
+    icon: ?png.Image,
+    icon_tint: render.Color,
+    fallback: []const u8,
     value: []const u8,
     percent: u8,
     cfg: config.Config,
 ) void {
-    _ = canvas.text(x, y, label, cfg.muted, glyph_scale);
+    const icon_y = y + @divTrunc(text_height - icon_size, 2);
+    if (icon) |image| {
+        canvas.imageTinted(x, icon_y, icon_size, icon_size, &image, icon_tint);
+    } else {
+        const fallback_width = font.textWidth(fallback, glyph_scale);
+        _ = canvas.text(
+            x + @divTrunc(icon_size - fallback_width, 2),
+            y,
+            fallback,
+            icon_tint,
+            glyph_scale,
+        );
+    }
 
-    const bar_x = x + font.textWidth(label, glyph_scale) + gap;
+    const bar_x = x + icon_size + gap;
     const bar_y = y + @divTrunc(text_height - bar_height, 2);
     canvas.roundRect(
         bar_x,
