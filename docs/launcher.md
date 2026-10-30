@@ -144,9 +144,7 @@ The colour roles are:
 | `highlight_mid` | — | window border |
 | `highlight_high` | — | selected launcher row |
 
-`warm_1` and `warm_2` are the grouped warm accents (gold and love). The old
-keys `detail`, `gold` and `love`, plus the palette names `foam`, `pine`, `rose`
-and `iris`, are still accepted as aliases.
+`warm_1` and `warm_2` are the grouped warm accents (gold and love).
 
 ## Launcher controls
 

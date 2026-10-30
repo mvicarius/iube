@@ -182,15 +182,6 @@ fn colorField(config: *Config, key: []const u8) ?*Color {
     if (keyEql(key, "highlight_low")) return &config.highlight_low;
     if (keyEql(key, "highlight_mid")) return &config.highlight_mid;
     if (keyEql(key, "highlight_high")) return &config.highlight_high;
-
-    // Palette names and the old role names keep existing configs working.
-    if (keyEql(key, "foam")) return &config.accent;
-    if (keyEql(key, "pine")) return &config.dark_accent;
-    if (keyEql(key, "rose")) return &config.detail_1;
-    if (keyEql(key, "iris")) return &config.detail_2;
-    if (keyEql(key, "gold")) return &config.warm_1;
-    if (keyEql(key, "love")) return &config.warm_2;
-    if (keyEql(key, "detail")) return &config.detail_2;
     return null;
 }
 
@@ -321,27 +312,6 @@ test "parse scale radius and colors" {
     try std.testing.expectEqual(Color{ .r = 0x01, .g = 0x02, .b = 0x03 }, config.highlight_low);
     try std.testing.expectEqual(Color{ .r = 0x04, .g = 0x05, .b = 0x06 }, config.highlight_mid);
     try std.testing.expectEqual(Color{ .r = 0x07, .g = 0x08, .b = 0x09 }, config.highlight_high);
-}
-
-test "palette and legacy colour aliases" {
-    var config = Config{};
-    parse(&config,
-        \\[colors]
-        \\foam = #010101
-        \\pine = #020202
-        \\rose = #030303
-        \\iris = #040404
-        \\gold = #050505
-        \\love = #060606
-        \\detail = #070707
-    );
-
-    try std.testing.expectEqual(Color{ .r = 1, .g = 1, .b = 1 }, config.accent);
-    try std.testing.expectEqual(Color{ .r = 2, .g = 2, .b = 2 }, config.dark_accent);
-    try std.testing.expectEqual(Color{ .r = 3, .g = 3, .b = 3 }, config.detail_1);
-    try std.testing.expectEqual(Color{ .r = 7, .g = 7, .b = 7 }, config.detail_2);
-    try std.testing.expectEqual(Color{ .r = 5, .g = 5, .b = 5 }, config.warm_1);
-    try std.testing.expectEqual(Color{ .r = 6, .g = 6, .b = 6 }, config.warm_2);
 }
 
 test "parse alpha and quoted values" {
