@@ -11,6 +11,7 @@ pub const Kind = enum {
     scan,
     wireless,
     connect,
+    connect_new,
     disconnect,
 };
 
@@ -22,6 +23,10 @@ pub const Job = struct {
     ap_len: usize = 0,
     saved_path: [256]u8 = undefined,
     saved_len: usize = 0,
+    ssid: [128]u8 = undefined,
+    ssid_len: usize = 0,
+    password: [128]u8 = undefined,
+    password_len: usize = 0,
     value: bool = false,
 
     fn deviceSlice(self: *const Job) []const u8 {
@@ -34,6 +39,19 @@ pub const Job = struct {
 
     fn savedSlice(self: *const Job) []const u8 {
         return self.saved_path[0..self.saved_len];
+    }
+
+    fn ssidSlice(self: *const Job) []const u8 {
+        return self.ssid[0..self.ssid_len];
+    }
+
+    fn passwordSlice(self: *const Job) []const u8 {
+        return self.password[0..self.password_len];
+    }
+
+    pub fn clearSecret(self: *Job) void {
+        @memset(self.password[0..], 0);
+        self.password_len = 0;
     }
 };
 
@@ -111,10 +129,11 @@ pub const Worker = struct {
                 self.mutex.unlock(self.io);
                 return;
             }
-            const job = self.jobs.orderedRemove(0);
+            var job = self.jobs.orderedRemove(0);
             self.mutex.unlock(self.io);
 
-            var result = self.process(job);
+            var result = self.process(&job);
+            job.clearSecret();
 
             self.mutex.lockUncancelable(self.io);
             if (self.stopping) {
@@ -128,7 +147,7 @@ pub const Worker = struct {
         }
     }
 
-    fn process(self: *Worker, job: Job) Result {
+    fn process(self: *Worker, job: *const Job) Result {
         var result = Result{ .kind = job.kind, .success = false };
 
         const client = self.ensureClient() catch |err| {
@@ -188,6 +207,25 @@ pub const Worker = struct {
                 result.success = true;
                 self.refreshResult(client, &result);
             },
+            .connect_new => {
+                const device = deviceFromPath(job.deviceSlice());
+                const network = wifi.Network{
+                    .ap_path = job.apSlice(),
+                    .ssid = job.ssidSlice(),
+                    .strength = 0,
+                    .frequency = 0,
+                    .secured = job.value,
+                    .connected = false,
+                };
+                client.addAndActivate(device, network, job.passwordSlice()) catch |err| {
+                    result.error_value = err;
+                    self.resetClientIfBroken(err);
+                    return result;
+                };
+                std.Io.sleep(self.io, .fromMilliseconds(1000), .awake) catch {};
+                result.success = true;
+                self.refreshResult(client, &result);
+            },
             .disconnect => {
                 const device = deviceFromPath(job.deviceSlice());
                 client.disconnect(device) catch |err| {
@@ -236,6 +274,7 @@ pub const Worker = struct {
 
     fn destroy(self: *Worker) void {
         if (self.client) |*client| client.deinit();
+        for (self.jobs.items) |*job| job.clearSecret();
         self.jobs.deinit(self.gpa);
         for (self.results.items) |*result| result.deinit();
         self.results.deinit(self.gpa);

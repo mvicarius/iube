@@ -193,6 +193,9 @@ fn handleEvent(session: *Session, view: anytype, event: wayland.Event) void {
 fn handleKeyEvent(session: *Session, view: anytype, key: wayland.Key) void {
     if (key.pressed) {
         if (key.keysym == ui.key_escape) {
+            if (@hasDecl(@TypeOf(view.*), "handleEscape")) {
+                if (view.handleEscape(session)) return;
+            }
             session.running = false;
             return;
         }

@@ -49,6 +49,30 @@ pub const Saved = struct {
     ssid: []const u8,
 };
 
+/// Settings for a new 802-11-wireless profile. `password` is only used when
+/// `secured` is true and is never stored outside the transient request body.
+pub const NewProfile = struct {
+    ssid: []const u8,
+    password: []const u8,
+    secured: bool,
+    uuid: []const u8,
+};
+
+const ProfileValue = union(enum) {
+    string: []const u8,
+    bytes: []const u8,
+};
+
+const ProfileEntry = struct {
+    key: []const u8,
+    value: ProfileValue,
+};
+
+const ProfileSection = struct {
+    name: []const u8,
+    entries: []const ProfileEntry,
+};
+
 pub const State = struct {
     arena: std.heap.ArenaAllocator,
     device: ?Device,
@@ -159,6 +183,41 @@ pub const Client = struct {
             .member = "ActivateConnection",
             .signature = "ooo",
             .body = body.slice(),
+        });
+        reply.deinit();
+    }
+
+    /// Create a new NetworkManager profile and activate it in one call.
+    ///
+    /// The password only lives in the transient D-Bus body. NetworkManager
+    /// stores it in the new profile; iube keeps no copy.
+    pub fn addAndActivate(
+        self: *Client,
+        device: Device,
+        network: Network,
+        password: []const u8,
+    ) !void {
+        var uuid_buffer: [36]u8 = undefined;
+        const uuid = makeUuid(self.bus.io, &uuid_buffer);
+
+        var body = dbus.Builder{};
+        putNewProfile(&body, .{
+            .ssid = network.ssid,
+            .password = password,
+            .secured = network.secured,
+            .uuid = uuid,
+        });
+        body.putString(device.path);
+        body.putString(network.ap_path);
+
+        var reply = try self.bus.call(.{
+            .destination = nm,
+            .path = nm_path,
+            .interface = nm,
+            .member = "AddAndActivateConnection",
+            .signature = "a{sa{sv}}oo",
+            .body = body.slice(),
+            .timeout_ms = 15000,
         });
         reply.deinit();
     }
@@ -441,6 +500,94 @@ pub const Client = struct {
     }
 };
 
+/// Writes a complete `a{sa{sv}}` settings dictionary at the start of a fresh
+/// body. Exposed for tests; production code calls it through `addAndActivate`.
+fn putNewProfile(builder: *dbus.Builder, profile: NewProfile) void {
+    const connection = [_]ProfileEntry{
+        .{ .key = "id", .value = .{ .string = if (profile.ssid.len > 0) profile.ssid else "iube" } },
+        .{ .key = "uuid", .value = .{ .string = profile.uuid } },
+        .{ .key = "type", .value = .{ .string = "802-11-wireless" } },
+    };
+    const wireless = [_]ProfileEntry{
+        .{ .key = "ssid", .value = .{ .bytes = profile.ssid } },
+        .{ .key = "mode", .value = .{ .string = "infrastructure" } },
+    };
+    const security = [_]ProfileEntry{
+        .{ .key = "key-mgmt", .value = .{ .string = "wpa-psk" } },
+        .{ .key = "psk", .value = .{ .string = profile.password } },
+    };
+
+    var sections: [3]ProfileSection = undefined;
+    var count: usize = 0;
+    sections[count] = .{ .name = "connection", .entries = &connection };
+    count += 1;
+    sections[count] = .{ .name = "802-11-wireless", .entries = &wireless };
+    count += 1;
+    if (profile.secured) {
+        sections[count] = .{ .name = "802-11-wireless-security", .entries = &security };
+        count += 1;
+    }
+
+    putSettings(builder, sections[0..count]);
+}
+
+fn putSettings(builder: *dbus.Builder, sections: []const ProfileSection) void {
+    var payload = dbus.Builder{};
+    for (sections) |section| {
+        payload.alignTo(8);
+        payload.putString(section.name);
+        putEntries(&payload, section.entries);
+    }
+
+    builder.putU32(@intCast(payload.len));
+    builder.alignTo(8);
+    builder.putRaw(payload.slice());
+}
+
+fn putEntries(builder: *dbus.Builder, entries: []const ProfileEntry) void {
+    var payload = dbus.Builder{};
+    for (entries) |entry| {
+        payload.alignTo(8);
+        payload.putString(entry.key);
+        switch (entry.value) {
+            .string => |value| {
+                payload.putSignature("s");
+                payload.putString(value);
+            },
+            .bytes => |value| {
+                payload.putSignature("ay");
+                payload.putU32(@intCast(value.len));
+                payload.putRaw(value);
+            },
+        }
+    }
+
+    builder.alignTo(4);
+    builder.putU32(@intCast(payload.len));
+    builder.alignTo(8);
+    builder.putRaw(payload.slice());
+}
+
+fn makeUuid(io: std.Io, buffer: *[36]u8) []const u8 {
+    var bytes: [16]u8 = undefined;
+    std.Io.random(io, &bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const digits = "0123456789abcdef";
+    var out: usize = 0;
+    for (bytes, 0..) |byte, index| {
+        if (index == 4 or index == 6 or index == 8 or index == 10) {
+            buffer[out] = '-';
+            out += 1;
+        }
+        buffer[out] = digits[byte >> 4];
+        buffer[out + 1] = digits[byte & 0x0f];
+        out += 2;
+    }
+    return buffer[0..36];
+}
+
 fn finishArray(reader: *dbus.Reader, end: usize) !void {
     if (reader.index > end) return error.Protocol;
     if (end - reader.index >= 8) return error.Protocol;
@@ -475,6 +622,113 @@ test "network label falls back to hidden" {
         .connected = false,
     };
     try std.testing.expectEqualStrings("(hidden)", hidden.label());
+}
+
+const ParsedProfile = struct {
+    has_connection: bool = false,
+    has_wireless: bool = false,
+    has_security: bool = false,
+    id: []const u8 = "",
+    uuid: []const u8 = "",
+    connection_type: []const u8 = "",
+    ssid: []const u8 = "",
+    mode: []const u8 = "",
+    key_mgmt: []const u8 = "",
+    psk: []const u8 = "",
+};
+
+fn parseProfileForTest(data: []const u8) !ParsedProfile {
+    var parsed = ParsedProfile{};
+    var reader = dbus.Reader{ .data = data };
+    const outer_end = try reader.beginArray(8);
+    while (reader.index < outer_end) {
+        try reader.alignTo(8);
+        const section = try reader.readString();
+        const inner_end = try reader.beginArray(8);
+        while (reader.index < inner_end) {
+            try reader.alignTo(8);
+            const key = try reader.readString();
+            const signature = try reader.readSignature();
+
+            if (std.mem.eql(u8, signature, "s")) {
+                const value = try reader.readString();
+                if (std.mem.eql(u8, section, "connection")) {
+                    if (std.mem.eql(u8, key, "id")) parsed.id = value else if (std.mem.eql(u8, key, "uuid")) parsed.uuid = value else if (std.mem.eql(u8, key, "type")) parsed.connection_type = value else return error.Protocol;
+                } else if (std.mem.eql(u8, section, "802-11-wireless")) {
+                    if (std.mem.eql(u8, key, "mode")) parsed.mode = value else return error.Protocol;
+                } else if (std.mem.eql(u8, section, "802-11-wireless-security")) {
+                    if (std.mem.eql(u8, key, "key-mgmt")) parsed.key_mgmt = value else if (std.mem.eql(u8, key, "psk")) parsed.psk = value else return error.Protocol;
+                } else {
+                    return error.Protocol;
+                }
+            } else if (std.mem.eql(u8, signature, "ay")) {
+                const value = try reader.readByteArray();
+                if (std.mem.eql(u8, section, "802-11-wireless") and
+                    std.mem.eql(u8, key, "ssid"))
+                {
+                    parsed.ssid = value;
+                } else {
+                    return error.Protocol;
+                }
+            } else {
+                return error.Protocol;
+            }
+        }
+        try finishArray(&reader, inner_end);
+
+        if (std.mem.eql(u8, section, "connection")) {
+            parsed.has_connection = true;
+        } else if (std.mem.eql(u8, section, "802-11-wireless")) {
+            parsed.has_wireless = true;
+        } else if (std.mem.eql(u8, section, "802-11-wireless-security")) {
+            parsed.has_security = true;
+        } else {
+            return error.Protocol;
+        }
+    }
+    try finishArray(&reader, outer_end);
+    if (reader.index != data.len) return error.Protocol;
+    return parsed;
+}
+
+test "new secured profile includes ssid and wpa-psk" {
+    var body = dbus.Builder{};
+    putNewProfile(&body, .{
+        .ssid = "Cafe",
+        .password = "hunter2",
+        .secured = true,
+        .uuid = "00112233-4455-6677-8899-aabbccddeeff",
+    });
+
+    const parsed = try parseProfileForTest(body.slice());
+    try std.testing.expect(parsed.has_connection);
+    try std.testing.expect(parsed.has_wireless);
+    try std.testing.expect(parsed.has_security);
+    try std.testing.expectEqualStrings("Cafe", parsed.id);
+    try std.testing.expectEqualStrings("00112233-4455-6677-8899-aabbccddeeff", parsed.uuid);
+    try std.testing.expectEqualStrings("802-11-wireless", parsed.connection_type);
+    try std.testing.expectEqualStrings("Cafe", parsed.ssid);
+    try std.testing.expectEqualStrings("infrastructure", parsed.mode);
+    try std.testing.expectEqualStrings("wpa-psk", parsed.key_mgmt);
+    try std.testing.expectEqualStrings("hunter2", parsed.psk);
+}
+
+test "new open profile omits the security section" {
+    var body = dbus.Builder{};
+    putNewProfile(&body, .{
+        .ssid = "Library",
+        .password = "",
+        .secured = false,
+        .uuid = "00112233-4455-6677-8899-aabbccddeeff",
+    });
+
+    const parsed = try parseProfileForTest(body.slice());
+    try std.testing.expect(parsed.has_connection);
+    try std.testing.expect(parsed.has_wireless);
+    try std.testing.expect(!parsed.has_security);
+    try std.testing.expectEqualStrings("Library", parsed.ssid);
+    try std.testing.expectEqualStrings("", parsed.key_mgmt);
+    try std.testing.expectEqualStrings("", parsed.psk);
 }
 
 test "network band labels" {
