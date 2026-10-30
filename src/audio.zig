@@ -78,6 +78,12 @@ pub const Device = struct {
         const scaled = @as(u64, self.volume) * 100 + pa_volume_norm / 2;
         return @intCast(@min(scaled / pa_volume_norm, 150));
     }
+
+    /// Fixed-width percentage label so the volume bar never shifts when the
+    /// value changes from e.g. 40% to 100%.
+    pub fn percentLabel(self: Device, buffer: []u8) []const u8 {
+        return std.fmt.bufPrint(buffer, "{d:>3}%", .{self.percent()}) catch "???%";
+    }
 };
 
 pub const State = struct {
@@ -624,4 +630,15 @@ test "device percentage and label" {
     };
     try std.testing.expectEqual(@as(u8, 50), device.percent());
     try std.testing.expectEqualStrings("alsa_output.test", device.label());
+
+    var buffer: [8]u8 = undefined;
+    try std.testing.expectEqualStrings(" 50%", device.percentLabel(&buffer));
+
+    var loud = device;
+    loud.volume = pa_volume_norm;
+    try std.testing.expectEqualStrings("100%", loud.percentLabel(&buffer));
+
+    var silent = device;
+    silent.volume = 0;
+    try std.testing.expectEqualStrings("  0%", silent.percentLabel(&buffer));
 }

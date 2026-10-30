@@ -614,11 +614,7 @@ pub const Audio = struct {
                     font_scale,
                 );
             } else {
-                const percent_text = std.fmt.bufPrint(
-                    &percent_buffer,
-                    "{d}%",
-                    .{device.percent()},
-                ) catch "?";
+                const percent_text = device.percentLabel(&percent_buffer);
                 const percent_width = font.textWidth(percent_text, font_scale);
                 info_left -= percent_width;
                 _ = canvas.text(
