@@ -107,6 +107,7 @@ def main() -> None:
         ("iube bluetooth", ["bluetooth"]),
         ("iube wifi", ["wifi"]),
         ("iube power", ["power"]),
+        ("iube brightness", ["brightness"]),
     ]
 
     print("| Command | Open (median) | Peak RSS |")

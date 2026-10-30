@@ -50,11 +50,14 @@ The name is passed as one shell argument; quote descriptions containing spaces.
 | `iube bluetooth discover on\|off` | Start or stop discovery on the first adapter. |
 | `iube bluetooth connect <name\|address>` | Connect a known device. |
 | `iube bluetooth disconnect <name\|address>` | Disconnect a device. |
+| `iube bluetooth pair <name\|address>` | Pair a device using a just-works agent. |
+| `iube bluetooth forget <name\|address>` | Remove a paired device. |
 | `iube bluetooth list` | Print the adapter and known devices. |
 
 Device names and addresses are matched case-insensitively. `connect` does not
-pair: the device must already be known to BlueZ. Use `iube bluetooth` or another
-BlueZ client to pair a new device.
+pair: the device must already be known to BlueZ. `pair` registers a short-lived
+just-works agent; devices that require a passkey or PIN are rejected with a
+clear error. `forget` removes the device from the adapter.
 
 `list` prints one device per line as state, name and address:
 
@@ -164,8 +167,9 @@ handlers such as `on-click`, not in a polling command.
 - Audio actions use the default sink or source. They do not select a device
   first unless `iube audio default` is used.
 - Audio volume is limited to 0-100% even though PulseAudio allows up to 150%.
-- Bluetooth actions use the first adapter only. Pairing, discovery filters and
-  device removal are not part of this command grammar.
+- Bluetooth actions use the first adapter only. Pairing supports just-works
+  devices; passkey, PIN and display-confirmation flows are not implemented.
+  Discovery filters are not exposed.
 - Wi-Fi actions require NetworkManager. New profiles are limited to open and
   WPA2-PSK networks; WPA3/SAE, enterprise and hidden networks are not supported.
 - Power profiles are limited to low-power/power-saver, balanced and performance

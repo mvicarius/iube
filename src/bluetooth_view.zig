@@ -41,6 +41,10 @@ pub const Bluetooth = struct {
     pending_path_len: usize = 0,
     pending_connect: bool = false,
 
+    forget_path: [256]u8 = undefined,
+    forget_path_len: usize = 0,
+    forget_deadline_ms: i64 = 0,
+
     error_buffer: [256]u8 = undefined,
     error_len: usize = 0,
     error_deadline_ms: i64 = 0,
@@ -76,6 +80,11 @@ pub const Bluetooth = struct {
     }
 
     pub fn tick(self: *Bluetooth, s: *session.Session) void {
+        if (self.forget_deadline_ms > 0 and s.nowMs() >= self.forget_deadline_ms) {
+            self.clearForget();
+            s.dirty = true;
+        }
+
         if (self.worker) |worker| {
             while (worker.poll()) |result_value| {
                 var result = result_value;
@@ -418,6 +427,7 @@ pub const Bluetooth = struct {
     }
 
     fn moveSelection(self: *Bluetooth, s: *session.Session, delta: i32) void {
+        self.clearForget();
         const list = self.devices() orelse return;
         if (list.len == 0) return;
 
@@ -468,7 +478,30 @@ pub const Bluetooth = struct {
 
     fn forgetSelected(self: *Bluetooth, s: *session.Session) void {
         const device = self.currentDevice() orelse return;
-        _ = self.submitAction(.forget, device.path, device.adapter_path, false, s);
+        const now = s.nowMs();
+        if (self.forget_path_len == device.path.len and
+            self.forget_deadline_ms > now and
+            std.mem.eql(u8, self.forget_path[0..self.forget_path_len], device.path))
+        {
+            self.clearForget();
+            _ = self.submitAction(.forget, device.path, device.adapter_path, false, s);
+            return;
+        }
+        if (device.path.len > self.forget_path.len) {
+            self.setNotice("Device path too long");
+            s.dirty = true;
+            return;
+        }
+        @memcpy(self.forget_path[0..device.path.len], device.path);
+        self.forget_path_len = device.path.len;
+        self.forget_deadline_ms = now + 3000;
+        self.setNotice("Press Delete again to forget this device");
+        s.dirty = true;
+    }
+
+    fn clearForget(self: *Bluetooth) void {
+        self.forget_path_len = 0;
+        self.forget_deadline_ms = 0;
     }
 
     fn submitAction(

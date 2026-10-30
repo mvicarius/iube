@@ -28,12 +28,13 @@ window setup.
 
 | Tool | Command | Preview | Open | Peak RSS |
 | --- | --- | --- | ---: | ---: |
-| Control panel | `iube` | <img src="docs/screenshot-panel.png" width="280" alt="Control panel"> | 5.0 ms | 14.4 MB |
-| Application launcher | `iube launch` | <img src="docs/screenshot.png" width="280" alt="Application launcher"> | 9.4 ms | 14.4 MB |
+| Control panel | `iube` | <img src="docs/screenshot-panel.png" width="280" alt="Control panel"> | 5.5 ms | 14.4 MB |
+| Application launcher | `iube launch` | <img src="docs/screenshot.png" width="280" alt="Application launcher"> | 7.8 ms | 14.4 MB |
 | Audio | `iube audio` | <img src="docs/screenshot-audio.png" width="280" alt="Audio controller"> | 9.6 ms | 14.4 MB |
-| Bluetooth | `iube bluetooth` | <img src="docs/screenshot-bluetooth.png" width="280" alt="Bluetooth controller"> | 7.4 ms | 14.4 MB |
-| Wi-Fi | `iube wifi` | <img src="docs/screenshot-wifi.png" width="280" alt="Wi-Fi controller"> | 9.6 ms | 14.4 MB |
-| Power | `iube power` | <img src="docs/screenshot-power.png" width="280" alt="Power controller"> | 16.0 ms | 14.4 MB |
+| Bluetooth | `iube bluetooth` | <img src="docs/screenshot-bluetooth.png" width="280" alt="Bluetooth controller"> | 7.7 ms | 14.4 MB |
+| Wi-Fi | `iube wifi` | <img src="docs/screenshot-wifi.png" width="280" alt="Wi-Fi controller"> | 11.9 ms | 14.4 MB |
+| Power | `iube power` | <img src="docs/screenshot-power.png" width="280" alt="Power controller"> | 16.5 ms | 14.4 MB |
+| Brightness | `iube brightness` | <img src="docs/screenshot-brightness.png" width="280" alt="Brightness controller"> | 7.5 ms | 14.4 MB |
 
 Measurements are produced by [docs/measure.py](docs/measure.py). The script runs
 five measurements after one warm-up. Open time is measured from process start to
