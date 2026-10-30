@@ -503,7 +503,7 @@ fn readPpdProfiles(
     alloc: std.mem.Allocator,
     choices: *std.ArrayList([]const u8),
 ) !void {
-    const end = try reader.beginArray(8);
+    const end = try reader.beginArray(4);
     while (reader.index < end) {
         const dict_end = try reader.beginArray(8);
         while (reader.index < dict_end) {
@@ -567,4 +567,29 @@ test "action availability" {
     try std.testing.expect(!Action.hibernate.availability(actions).available());
     try std.testing.expect(Action.reboot.destructive());
     try std.testing.expect(!Action.suspend_system.destructive());
+}
+
+test "ppd profile array uses four-byte array alignment" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var body = dbus.Builder{};
+    body.putU32(0); // outer array length placeholder at offset 0
+    body.putU32(0); // first dict length placeholder at offset 4
+    body.alignTo(8);
+    const entry_start = body.len;
+    body.putString("Profile");
+    body.putSignature("s");
+    body.putString("power-saver");
+
+    std.mem.writeInt(u32, body.data[4..8], @intCast(body.len - entry_start), .little);
+    std.mem.writeInt(u32, body.data[0..4], @intCast(body.len - 4), .little);
+
+    var choices: std.ArrayList([]const u8) = .empty;
+    var reader = dbus.Reader{ .data = body.slice() };
+    try readPpdProfiles(&reader, alloc, &choices);
+
+    try std.testing.expectEqual(@as(usize, 1), choices.items.len);
+    try std.testing.expectEqualStrings("power-saver", choices.items[0]);
 }
