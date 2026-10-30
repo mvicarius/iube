@@ -10,9 +10,9 @@ setup.
 ```text
 iube                    -> panel.Panel
 iube launch             -> launcher.Launcher
-iube audio              -> placeholder.Placeholder(audio)
-iube bluetooth          -> placeholder.Placeholder(bluetooth)
-iube wifi               -> placeholder.Placeholder(wifi)
+iube audio              -> audio_view.Audio
+iube bluetooth          -> bluetooth_view.Bluetooth
+iube wifi               -> wifi_view.Wifi
 iube power              -> placeholder.Placeholder(power)
 iube help / version     -> text output, no Wayland connection
 ```
@@ -35,6 +35,9 @@ src/
   bluetooth_view.zig  Bluetooth controller: adapter and device list
   bluetooth_worker.zig  long-lived Bluetooth job worker
   bluetooth.zig    BlueZ object model over D-Bus (no BlueZ client library)
+  wifi_view.zig    Wi-Fi controller: network list, scan, connect, power
+  wifi_worker.zig  long-lived Wi-Fi job worker
+  wifi.zig         NetworkManager device, access point and profile model over D-Bus
   dbus.zig         minimal system D-Bus client (no libdbus)
 
   placeholder.zig  "coming soon" view for unfinished tools
@@ -65,9 +68,10 @@ Every command uses:
 - `session.zig`: the same event loop, key repeat, blinking and cursor-shape
   handling.
 
-Only the view differs. `audio_view.zig` additionally uses `audio.zig`, and
-`bluetooth_view.zig` uses `bluetooth.zig` and `dbus.zig`. These are specific to
-their tools but still linked without any new dependency.
+Only the view differs. `audio_view.zig` additionally uses `audio.zig`,
+`bluetooth_view.zig` uses `bluetooth.zig` and `dbus.zig`, and `wifi_view.zig`
+uses `wifi.zig` and `dbus.zig`. These are specific to their tools but still
+linked without any new dependency.
 
 ## View interface
 
@@ -128,6 +132,7 @@ All views share the same 640 px base width, multiplied by `scale` from the
 config. Heights differ:
 
 - Launcher: 640×360 base; the list scrolls.
+- Audio, Bluetooth and Wi-Fi: 640×360 base; the list scrolls when it grows.
 - Control panel: height is computed from the number of tools:
   `margin * 2 + rows * row_step - gap`. Every entry is visible; the panel does
   not implement scrolling.
@@ -141,7 +146,8 @@ config. Heights differ:
 2. Create `src/<tool>.zig` with the view methods above.
 3. Add a branch in `src/main.zig` that constructs that view.
 4. Flip the registry entry to `Status.available`.
-5. Document the backend in `docs/tools.md`.
+5. Document the backend in `docs/tools.md` and, for implemented tools, a
+   dedicated page in `docs/`.
 
 Until step 2 is done, the registry entry stays `coming_soon` and the generic
 `placeholder.zig` view is used. `iube <id>` already works in that state.

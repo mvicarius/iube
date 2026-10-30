@@ -359,6 +359,15 @@ pub const Reader = struct {
         return value;
     }
 
+    pub fn readByteArray(self: *Reader) ![]const u8 {
+        try self.alignTo(4);
+        const length = try self.readU32();
+        if (self.index + length > self.data.len) return error.Protocol;
+        const value = self.data[self.index .. self.index + length];
+        self.index += length;
+        return value;
+    }
+
     pub fn readObjectPath(self: *Reader) ![]const u8 {
         return self.readString();
     }
@@ -388,7 +397,9 @@ pub const Reader = struct {
 
         switch (signature[0]) {
             'y', 'g', 'v' => {
-                if (signature[0] == 'v') {
+                if (signature[0] == 'g') {
+                    _ = try self.readSignature();
+                } else if (signature[0] == 'v') {
                     const inner = try self.readSignature();
                     try self.skipValue(inner);
                 } else {
@@ -521,5 +532,14 @@ test "dbus skips nested containers" {
 
     var reader = Reader{ .data = body.slice() };
     try reader.skipValue("a{sv}");
+    try std.testing.expectEqual(body.len, reader.index);
+}
+
+test "dbus skips signature values" {
+    var body = Builder{};
+    body.putSignature("a{sv}");
+
+    var reader = Reader{ .data = body.slice() };
+    try reader.skipValue("g");
     try std.testing.expectEqual(body.len, reader.index);
 }

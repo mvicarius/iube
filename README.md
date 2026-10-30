@@ -32,7 +32,7 @@ window setup.
 | Application launcher | `iube launch` | <img src="docs/screenshot.png" width="280" alt="Application launcher"> | 9.6 ms | 14.3 MB |
 | Audio | `iube audio` | <img src="docs/screenshot-audio.png" width="280" alt="Audio controller"> | 9.5 ms | 14.3 MB |
 | Bluetooth | `iube bluetooth` | <img src="docs/screenshot-bluetooth.png" width="280" alt="Bluetooth controller"> | 7.9 ms | 14.3 MB |
-| Wi-Fi | `iube wifi` | n/a | n/a | n/a |
+| Wi-Fi | `iube wifi` | <img src="docs/screenshot-wifi.png" width="280" alt="Wi-Fi controller"> | 11.7 ms | 14.0 MB |
 | Power | `iube power` | n/a | n/a | n/a |
 
 Measurements are produced by [docs/measure.py](docs/measure.py). The script runs
@@ -44,8 +44,8 @@ Hyprland, on a 1920×1080 output at 1× scale.
 
 More information about each feature lives in the [docs](docs) folder:
 [launcher](docs/launcher.md), [audio](docs/audio.md),
-[Bluetooth](docs/bluetooth.md), [architecture](docs/architecture.md), and
-[planned backends](docs/tools.md).
+[Bluetooth](docs/bluetooth.md), [Wi-Fi](docs/wifi.md),
+[architecture](docs/architecture.md), and [planned backends](docs/tools.md).
 
 ## Design goals and philosophy
 
@@ -55,10 +55,10 @@ More information about each feature lives in the [docs](docs) folder:
   composited by hand into `wl_shm` memory. The only linked libraries are libc,
   `libwayland-client` and `libxkbcommon`.
 - **No tool-specific client libraries.** The managers speak the underlying
-  protocols directly: the PulseAudio socket, BlueZ over D-Bus, kernel netlink
-  (nl80211), rfkill/sysfs, and logind's D-Bus interface. System services such as
-  PipeWire, BlueZ, wpa_supplicant and logind are still expected to be running.
-  iube does not replace them.
+  protocols directly: the PulseAudio socket, BlueZ and NetworkManager over
+  D-Bus, sysfs, and logind's D-Bus interface. System services such as PipeWire,
+  BlueZ, NetworkManager, wpa_supplicant and logind are still expected to be
+  running. iube does not replace them.
 - **Shared visual language.** Theme, config, scaling, fonts, icons and window
   chrome are shared by every command.
 
@@ -73,6 +73,10 @@ by GNOME/Mutter, Weston or X11 sessions.
 
 See [docs/launcher.md](docs/launcher.md#layer-shell-is-required) for the full
 explanation.
+
+The Wi-Fi controller additionally requires NetworkManager to be running and to
+manage the wireless interface. NetworkManager owns the supplicant and saved
+profiles; iube only reads their state over D-Bus.
 
 ## Installation
 
