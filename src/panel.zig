@@ -10,14 +10,32 @@ const std = @import("std");
 const wayland = @import("wayland.zig");
 const render = @import("render.zig");
 const font = @import("font.zig");
+const png = @import("png.zig");
 const ui = @import("ui.zig");
 const session = @import("session.zig");
 const tools = @import("tools.zig");
 const spawn = @import("spawn.zig");
 
+const IconSlot = struct {
+    tried: bool = false,
+    image: ?png.Image = null,
+};
+
 pub const Panel = struct {
+    gpa: std.mem.Allocator,
     selected: usize = 0,
     hover: ?usize = null,
+    icons: [tools.all.len]IconSlot = @splat(.{}),
+
+    pub fn init(gpa: std.mem.Allocator) Panel {
+        return .{ .gpa = gpa };
+    }
+
+    pub fn deinit(self: *Panel) void {
+        for (&self.icons) |*slot| {
+            if (slot.image) |*image| image.deinit(self.gpa);
+        }
+    }
 
     pub fn windowSize(_: *Panel, metrics: ui.Metrics) ui.WindowSize {
         return metrics.listWindowSize(tools.all.len);
@@ -162,67 +180,87 @@ pub const Panel = struct {
             const icon_x = ui.px(geometry.x + m.small_margin, output_scale);
             const icon_y = ui.px(row_y + m.small_margin, output_scale);
             const icon_px = ui.px(m.icon_size, output_scale);
-            canvas.roundRect(
-                icon_x,
-                icon_y,
-                icon_px,
-                icon_px,
-                ui.px(m.icon_radius, output_scale),
-                cfg.highlight_low,
-            );
 
-            const initial = appInitial(tool.name);
-            const initial_width = font.textWidth(initial, font_scale);
-            _ = canvas.text(
-                icon_x + @divTrunc(icon_px - initial_width, 2),
-                icon_y + @divTrunc(icon_px - text_height, 2),
-                initial,
-                cfg.muted,
-                font_scale,
-            );
+            if (self.getIcon(index)) |image| {
+                const icon_gradient = [_]render.Color{
+                    cfg.accent,
+                    cfg.detail_1,
+                    cfg.detail_2,
+                };
+                canvas.imageGradientTinted(icon_x, icon_y, icon_px, icon_px, image, &icon_gradient);
+            } else {
+                canvas.roundRect(
+                    icon_x,
+                    icon_y,
+                    icon_px,
+                    icon_px,
+                    ui.px(m.icon_radius, output_scale),
+                    cfg.highlight_low,
+                );
+                const initial = appInitial(tool.name);
+                const initial_width = font.textWidth(initial, font_scale);
+                _ = canvas.text(
+                    icon_x + @divTrunc(icon_px - initial_width, 2),
+                    icon_y + @divTrunc(icon_px - text_height, 2),
+                    initial,
+                    cfg.detail_2,
+                    font_scale,
+                );
+            }
 
-            const badge_text = if (tool.status == .available) "Open" else "Coming soon";
-            const badge_color = if (tool.status == .available) cfg.accent else cfg.muted;
-            const badge_width = font.textWidth(badge_text, font_scale) + m.small_margin * 2;
-            const badge_height = text_height + m.small_margin;
-            const badge_x = geometry.x + geometry.w - m.small_margin - badge_width;
-            const badge_y = row_y + @divTrunc(m.row_height - badge_height, 2);
-
-            canvas.roundRect(
-                ui.px(badge_x, output_scale),
-                ui.px(badge_y, output_scale),
-                ui.px(badge_width, output_scale),
-                ui.px(badge_height, output_scale),
-                ui.px(m.icon_radius, output_scale),
-                cfg.highlight_low,
-            );
-            _ = canvas.text(
-                ui.px(badge_x + m.small_margin, output_scale),
-                ui.px(badge_y, output_scale) + @divTrunc(
-                    ui.px(badge_height, output_scale) - text_height,
-                    2,
-                ),
-                badge_text,
-                badge_color,
-                font_scale,
-            );
-
-            const name_x = ui.px(geometry.x + m.small_margin + m.icon_size + m.small_margin, output_scale);
-            const name_y = ui.px(row_y, output_scale) +
-                @divTrunc(ui.px(m.row_height, output_scale) - text_height, 2);
-            const name_width = ui.px(
-                @max(0, badge_x - m.small_margin - (geometry.x + m.small_margin + m.icon_size + m.small_margin)),
+            const row_y_px = ui.px(row_y, output_scale);
+            const row_height_px = ui.px(m.row_height, output_scale);
+            const name_x = ui.px(
+                geometry.x + m.small_margin + m.icon_size + m.small_margin * 2,
                 output_scale,
             );
-            _ = canvas.textFit(
+            const name_y = row_y_px + @divTrunc(row_height_px - text_height, 2);
+            const name_width = @max(
+                0,
+                ui.px(geometry.x + geometry.w - m.small_margin, output_scale) - name_x,
+            );
+            const status_text = if (tool.status == .coming_soon) "Coming soon" else "";
+            const status_gap = ui.px(m.small_margin, output_scale);
+            const status_width = if (status_text.len > 0)
+                font.textWidth(status_text, font_scale)
+            else
+                0;
+            const name_max = @max(
+                0,
+                name_width - (if (status_text.len > 0) status_width + status_gap else 0),
+            );
+            const name_end = canvas.textFit(
                 name_x,
                 name_y,
                 tool.name,
                 cfg.text,
                 font_scale,
-                name_width,
+                name_max,
             );
+            if (status_text.len > 0) {
+                const status_x = @min(
+                    name_end + status_gap,
+                    name_x + name_width - status_width,
+                );
+                _ = canvas.text(status_x, name_y, status_text, cfg.dark_accent, font_scale);
+            }
         }
+    }
+
+    fn getIcon(self: *Panel, index: usize) ?*png.Image {
+        const slot = &self.icons[index];
+        if (!slot.tried) {
+            slot.tried = true;
+            slot.image = png.decode(self.gpa, tools.all[index].icon) catch |err| blk: {
+                std.log.warn(
+                    "failed to decode icon for '{s}': {s}",
+                    .{ tools.all[index].name, @errorName(err) },
+                );
+                break :blk null;
+            };
+        }
+        if (slot.image) |*image| return image;
+        return null;
     }
 };
 

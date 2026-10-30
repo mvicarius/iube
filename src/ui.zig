@@ -118,6 +118,17 @@ pub fn textHeight(glyph_scale: f32) i32 {
     return @intFromFloat(@round(@as(f32, font.glyph_height) * glyph_scale));
 }
 
+/// Keys that should keep firing while held down. Direction keys are used by
+/// the launcher/panel for navigation and by the audio view for volume.
+pub fn keyRepeats(keysym: u32, text_len: u8) bool {
+    if (text_len > 0) return true;
+    return keysym == key_backspace or
+        keysym == key_up or
+        keysym == key_down or
+        keysym == key_left or
+        keysym == key_right;
+}
+
 /// Window body and border. The outer highlight_mid ring is one logical
 /// border-width wide and scales with the rest of the UI.
 pub fn drawWindowChrome(
@@ -198,4 +209,12 @@ test "scale multiplies window dimensions" {
     const metrics = Metrics.init(cfg);
     try std.testing.expectEqual(@as(i32, 1280), metrics.window_width);
     try std.testing.expectEqual(@as(i32, 720), metrics.window_height);
+}
+
+test "volume and navigation keys repeat while held" {
+    try std.testing.expect(keyRepeats(key_left, 0));
+    try std.testing.expect(keyRepeats(key_right, 0));
+    try std.testing.expect(keyRepeats(key_up, 0));
+    try std.testing.expect(keyRepeats(key_down, 0));
+    try std.testing.expect(!keyRepeats(key_escape, 0));
 }

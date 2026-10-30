@@ -7,4 +7,5 @@ test {
     _ = @import("render.zig");
     _ = @import("ui.zig");
     _ = @import("tools.zig");
+    _ = @import("audio.zig");
 }

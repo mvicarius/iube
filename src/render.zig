@@ -151,6 +151,70 @@ pub const Canvas = struct {
         }
     }
 
+    /// Draw a horizontally blended rounded rectangle, limited to
+    /// `visible_width` pixels from the left. Colours are sampled across the
+    /// full width, so a progress bar keeps the same palette as it fills.
+    pub fn roundRectGradient(
+        self: *Canvas,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        radius: i32,
+        visible_width: i32,
+        stops: []const Color,
+    ) void {
+        if (w <= 0 or h <= 0 or visible_width <= 0 or stops.len == 0) return;
+
+        const visible = @min(w, visible_width);
+        const x0 = @max(self.clip_x0, x);
+        const y0 = @max(self.clip_y0, y);
+        const x1 = @min(self.clip_x1, x +| visible);
+        const y1 = @min(self.clip_y1, y +| h);
+        if (x0 >= x1 or y0 >= y1) return;
+
+        const r: f32 = @floatFromInt(@max(0, @min(radius, @divTrunc(@min(w, h), 2))));
+        const cx: f32 = @as(f32, @floatFromInt(x)) + @as(f32, @floatFromInt(w)) / 2.0;
+        const cy: f32 = @as(f32, @floatFromInt(y)) + @as(f32, @floatFromInt(h)) / 2.0;
+        const half_w: f32 = @as(f32, @floatFromInt(w)) / 2.0;
+        const half_h: f32 = @as(f32, @floatFromInt(h)) / 2.0;
+        const width_f: f32 = @floatFromInt(w);
+
+        var py = y0;
+        while (py < y1) : (py += 1) {
+            const fy = @as(f32, @floatFromInt(py)) + 0.5;
+            var px = x0;
+            while (px < x1) : (px += 1) {
+                const fx = @as(f32, @floatFromInt(px)) + 0.5;
+
+                const qx = @abs(fx - cx) - (half_w - r);
+                const qy = @abs(fy - cy) - (half_h - r);
+
+                var dist: f32 = 0;
+                if (qx <= 0 and qy <= 0) {
+                    dist = @max(qx, qy) - r;
+                } else if (qx > 0 and qy <= 0) {
+                    dist = qx - r;
+                } else if (qy > 0 and qx <= 0) {
+                    dist = qy - r;
+                } else {
+                    dist = @sqrt(qx * qx + qy * qy) - r;
+                }
+
+                const coverage = std.math.clamp(0.5 - dist, 0.0, 1.0);
+                if (coverage <= 0.0) continue;
+
+                const t = std.math.clamp((fx - @as(f32, @floatFromInt(x))) / width_f, 0.0, 1.0);
+                self.blend(
+                    px,
+                    py,
+                    sampleGradient(stops, t),
+                    @intFromFloat(@round(coverage * 255.0)),
+                );
+            }
+        }
+    }
+
     pub fn text(self: *Canvas, x: i32, y: i32, text_value: []const u8, color: Color, glyph_scale: f32) i32 {
         var cursor = x;
         var it = std.unicode.Utf8Iterator{ .bytes = text_value, .i = 0 };
@@ -196,7 +260,35 @@ pub const Canvas = struct {
     /// Draw an image scaled into the target rectangle. Downscaling uses a
     /// small box filter; upscaling uses nearest-neighbour sampling.
     pub fn image(self: *Canvas, x: i32, y: i32, w: i32, h: i32, img: *const png.Image) void {
-        if (w <= 0 or h <= 0 or img.width == 0 or img.height == 0) return;
+        self.imageTinted(x, y, w, h, img, .{ .r = 255, .g = 255, .b = 255 });
+    }
+
+    /// Draw a monochrome image multiplied by `tint`, preserving its alpha.
+    pub fn imageTinted(
+        self: *Canvas,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        img: *const png.Image,
+        tint: Color,
+    ) void {
+        const stops = [_]Color{tint};
+        self.imageGradientTinted(x, y, w, h, img, &stops);
+    }
+
+    /// Draw a monochrome image with a horizontal gradient tint, preserving its
+    /// alpha. The gradient is sampled across the destination width.
+    pub fn imageGradientTinted(
+        self: *Canvas,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        img: *const png.Image,
+        stops: []const Color,
+    ) void {
+        if (w <= 0 or h <= 0 or img.width == 0 or img.height == 0 or stops.len == 0) return;
 
         const x0 = @max(self.clip_x0, x);
         const y0 = @max(self.clip_y0, y);
@@ -248,7 +340,19 @@ pub const Canvas = struct {
                     .b = @intCast(sum_b / sum_a),
                     .a = @intCast(sum_a / count),
                 };
-                self.blend(px, py, color, 255);
+                const t = std.math.clamp(
+                    (@as(f32, @floatFromInt(px - x)) + 0.5) / @as(f32, @floatFromInt(w)),
+                    0.0,
+                    1.0,
+                );
+                const tint = sampleGradient(stops, t);
+                const tinted = Color{
+                    .r = @intCast((@as(u32, color.r) * tint.r + 127) / 255),
+                    .g = @intCast((@as(u32, color.g) * tint.g + 127) / 255),
+                    .b = @intCast((@as(u32, color.b) * tint.b + 127) / 255),
+                    .a = @intCast((@as(u32, color.a) * tint.a + 127) / 255),
+                };
+                self.blend(px, py, tinted, 255);
             }
         }
     }
@@ -313,6 +417,33 @@ pub const Canvas = struct {
     }
 };
 
+fn sampleGradient(stops: []const Color, t: f32) Color {
+    if (stops.len == 1) return stops[0];
+
+    const position = std.math.clamp(t, 0.0, 1.0) *
+        @as(f32, @floatFromInt(stops.len - 1));
+    const raw_index: usize = @intFromFloat(@floor(position));
+    const index = @min(raw_index, stops.len - 2);
+    const from = stops[index];
+    const to = stops[index + 1];
+    return lerpColor(from, to, position - @as(f32, @floatFromInt(index)));
+}
+
+fn lerpColor(from: Color, to: Color, t: f32) Color {
+    return .{
+        .r = lerpChannel(from.r, to.r, t),
+        .g = lerpChannel(from.g, to.g, t),
+        .b = lerpChannel(from.b, to.b, t),
+        .a = lerpChannel(from.a, to.a, t),
+    };
+}
+
+fn lerpChannel(from: u8, to: u8, t: f32) u8 {
+    const a: f32 = @floatFromInt(from);
+    const b: f32 = @floatFromInt(to);
+    return @intFromFloat(@round(a + (b - a) * t));
+}
+
 fn sourcePixel(dest: usize, dest_size: usize, source_size: usize) usize {
     const sample = (@as(f32, @floatFromInt(dest)) + 0.5) *
         @as(f32, @floatFromInt(source_size)) /
@@ -329,6 +460,17 @@ fn packPremultiplied(color: Color, coverage: u8) u32 {
     const g = (@as(u32, color.g) * a + 127) / 255;
     const b = (@as(u32, color.b) * a + 127) / 255;
     return (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+test "gradient samples endpoint and middle stops" {
+    const stops = [_]Color{
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 100, .g = 100, .b = 100 },
+        .{ .r = 200, .g = 200, .b = 200 },
+    };
+    try std.testing.expectEqual(stops[0], sampleGradient(&stops, 0.0));
+    try std.testing.expectEqual(stops[2], sampleGradient(&stops, 1.0));
+    try std.testing.expectEqual(stops[1], sampleGradient(&stops, 0.5));
 }
 
 test "roundRect with zero radius is opaque inside" {

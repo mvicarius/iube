@@ -13,6 +13,7 @@ const session = @import("session.zig");
 const launcher = @import("launcher.zig");
 const panel = @import("panel.zig");
 const placeholder = @import("placeholder.zig");
+const audio_view = @import("audio_view.zig");
 const tools = @import("tools.zig");
 
 pub const std_options: std.Options = .{ .log_level = .warn };
@@ -23,7 +24,7 @@ const usage =
     \\Usage:
     \\  iube             open the iube control panel
     \\  iube launch      open the application launcher
-    \\  iube audio       open the audio manager (coming soon)
+    \\  iube audio       open the audio manager
     \\  iube bluetooth   open the bluetooth manager (coming soon)
     \\  iube wifi        open the Wi-Fi manager (coming soon)
     \\  iube power       open the power manager (coming soon)
@@ -51,6 +52,9 @@ pub fn main(init: std.process.Init) !void {
     }
     if (std.mem.eql(u8, command, "panel")) {
         return runPanel(init, env);
+    }
+    if (std.mem.eql(u8, command, "audio")) {
+        return runAudio(init, env);
     }
     if (std.mem.eql(u8, command, "help") or
         std.mem.eql(u8, command, "--help") or
@@ -92,12 +96,24 @@ fn runLauncher(init: std.process.Init, env: config.Env) !void {
 }
 
 fn runPanel(init: std.process.Init, env: config.Env) !void {
-    var view = panel.Panel{};
+    var view = panel.Panel.init(init.gpa);
+    defer view.deinit();
     try session.run(init.io, init.gpa, env, &view);
 }
 
 fn runPlaceholder(init: std.process.Init, env: config.Env, tool: *const tools.Tool) !void {
     var view = placeholder.Placeholder{ .tool = tool };
+    try session.run(init.io, init.gpa, env, &view);
+}
+
+fn runAudio(init: std.process.Init, env: config.Env) !void {
+    var view = audio_view.Audio.init(init.io, init.gpa, .{
+        .xdg_runtime_dir = init.environ_map.get("XDG_RUNTIME_DIR"),
+        .home = init.environ_map.get("HOME"),
+        .xdg_config_home = init.environ_map.get("XDG_CONFIG_HOME"),
+    });
+    defer view.deinit();
+
     try session.run(init.io, init.gpa, env, &view);
 }
 
