@@ -22,6 +22,7 @@ pub const Message = struct {
     member: []const u8,
     signature: []const u8 = "",
     body: []const u8 = "",
+    timeout_ms: i32 = io_timeout_ms,
 };
 
 pub const Reply = struct {
@@ -94,16 +95,22 @@ pub const Client = struct {
         try file.writeStreamingAll(self.io, message.body);
 
         while (true) {
-            const received = try self.receive();
+            const received = try self.receive(message.timeout_ms);
+            if (received.reply_serial) |reply_serial| {
+                if (reply_serial != serial) {
+                    self.gpa.free(received.body);
+                    continue;
+                }
+            } else {
+                self.gpa.free(received.body);
+                continue;
+            }
+
             switch (received.message_type) {
                 method_return => return .{ .gpa = self.gpa, .body = received.body },
                 error_reply => {
                     self.gpa.free(received.body);
                     return error.MethodFailed;
-                },
-                signal_message => {
-                    self.gpa.free(received.body);
-                    continue;
                 },
                 else => {
                     self.gpa.free(received.body);
@@ -115,12 +122,13 @@ pub const Client = struct {
 
     const Received = struct {
         message_type: u8,
+        reply_serial: ?u32,
         body: []u8,
     };
 
-    fn receive(self: *Client) !Received {
+    fn receive(self: *Client, timeout_ms: i32) !Received {
         var header: [16]u8 = undefined;
-        try self.readExact(&header);
+        try self.readExact(&header, timeout_ms);
         if (header[0] != 'l') return error.BigEndianUnsupported;
 
         const body_len = std.mem.readInt(u32, header[4..8], .little);
@@ -132,13 +140,17 @@ pub const Client = struct {
         const fields_padded = std.mem.alignForward(usize, fields_len, 8);
         const fields = try self.gpa.alloc(u8, fields_padded);
         defer self.gpa.free(fields);
-        try self.readExact(fields);
+        try self.readExact(fields, timeout_ms);
 
         const body = try self.gpa.alloc(u8, body_len);
         errdefer self.gpa.free(body);
-        try self.readExact(body);
+        try self.readExact(body, timeout_ms);
 
-        return .{ .message_type = header[1], .body = body };
+        return .{
+            .message_type = header[1],
+            .reply_serial = findReplySerial(fields[0..fields_len]),
+            .body = body,
+        };
     }
 
     fn authenticate(self: *Client) !void {
@@ -190,7 +202,7 @@ pub const Client = struct {
     fn readLine(self: *Client, buffer: []u8) ![]const u8 {
         var length: usize = 0;
         while (length < buffer.len) {
-            try self.waitReadable();
+            try self.waitReadable(io_timeout_ms);
             const count = try std.posix.read(self.stream.socket.handle, buffer[length .. length + 1]);
             if (count == 0) return error.ConnectionClosed;
             length += 1;
@@ -199,23 +211,23 @@ pub const Client = struct {
         return error.LineTooLong;
     }
 
-    fn readExact(self: *Client, buffer: []u8) !void {
+    fn readExact(self: *Client, buffer: []u8, timeout_ms: i32) !void {
         var filled: usize = 0;
         while (filled < buffer.len) {
-            try self.waitReadable();
+            try self.waitReadable(timeout_ms);
             const count = try std.posix.read(self.stream.socket.handle, buffer[filled..]);
             if (count == 0) return error.ConnectionClosed;
             filled += count;
         }
     }
 
-    fn waitReadable(self: *Client) !void {
+    fn waitReadable(self: *Client, timeout_ms: i32) !void {
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = self.stream.socket.handle,
             .events = std.posix.POLL.IN,
             .revents = 0,
         }};
-        const ready = try std.posix.poll(&poll_fds, io_timeout_ms);
+        const ready = try std.posix.poll(&poll_fds, timeout_ms);
         if (ready == 0) return error.Timeout;
         if ((poll_fds[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR)) == 0) {
             return error.ConnectionClosed;
@@ -432,6 +444,21 @@ pub const Reader = struct {
         if (self.index > self.data.len) return error.Protocol;
     }
 };
+
+fn findReplySerial(fields: []const u8) ?u32 {
+    var reader = Reader{ .data = fields };
+    while (reader.index < fields.len) {
+        reader.alignTo(8) catch return null;
+        const code = reader.readU8() catch return null;
+        const signature = reader.readSignature() catch return null;
+
+        if (code == 5 and std.mem.eql(u8, signature, "u")) {
+            return reader.readU32() catch null;
+        }
+        reader.skipValue(signature) catch return null;
+    }
+    return null;
+}
 
 fn alignmentFor(signature: []const u8) usize {
     if (signature.len == 0) return 1;

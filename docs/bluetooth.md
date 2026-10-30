@@ -36,6 +36,10 @@ While discovery is active, iube refreshes the device tree automatically every
 two seconds. Devices are ordered with connected devices first, paired devices
 second, and new/unpaired devices last.
 
+Connect and disconnect run on a worker D-Bus connection so the window stays
+responsive. The selected device shows `Connecting...` or `Disconnecting...`
+until the action finishes, then the device tree refreshes automatically.
+
 The header shows the adapter name and its current state: `On`, `Off`, or
 `Discovering`. Device rows show the name, address and connection state. Connected
 devices show a battery icon, bar and fixed-width percentage; non-connected

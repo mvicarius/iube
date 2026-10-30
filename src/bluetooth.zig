@@ -117,6 +117,7 @@ pub const Client = struct {
             .path = device.path,
             .interface = "org.bluez.Device1",
             .member = if (connected) "Connect" else "Disconnect",
+            .timeout_ms = 30_000,
         });
         reply.deinit();
     }

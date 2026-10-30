@@ -33,6 +33,13 @@ pub const Bluetooth = struct {
     scroll: i32 = 0,
     last_discovery_refresh_ms: i64 = 0,
 
+    action_thread: ?std.Thread = null,
+    action_done: std.atomic.Value(bool) = .init(false),
+    action_success: std.atomic.Value(bool) = .init(false),
+    action_connect: bool = false,
+    action_path: [256]u8 = undefined,
+    action_path_len: usize = 0,
+
     error_buffer: [256]u8 = undefined,
     error_len: usize = 0,
     error_deadline_ms: i64 = 0,
@@ -49,6 +56,8 @@ pub const Bluetooth = struct {
     }
 
     pub fn deinit(self: *Bluetooth) void {
+        if (self.action_thread) |thread| thread.join();
+        self.action_thread = null;
         if (self.client) |*client| client.deinit();
         if (self.state) |*state| state.deinit();
         if (self.signal_icon) |*icon| icon.deinit(self.gpa);
@@ -68,6 +77,23 @@ pub const Bluetooth = struct {
     }
 
     pub fn tick(self: *Bluetooth, s: *session.Session) void {
+        if (self.action_thread) |thread| {
+            if (self.action_done.load(.acquire)) {
+                const success = self.action_success.load(.acquire);
+                thread.join();
+                self.action_thread = null;
+                self.action_path_len = 0;
+                if (self.refreshState()) self.ensureSelectionVisible(s);
+                if (success) {
+                    self.error_len = 0;
+                    self.error_deadline_ms = 0;
+                } else {
+                    self.setNotice("Connection failed");
+                }
+                s.dirty = true;
+            }
+        }
+
         if (self.error_len > 0 and self.error_deadline_ms > 0 and s.nowMs() >= self.error_deadline_ms) {
             self.error_len = 0;
             self.error_deadline_ms = 0;
@@ -351,6 +377,11 @@ pub const Bluetooth = struct {
     }
 
     fn togglePower(self: *Bluetooth, s: *session.Session) void {
+        if (self.action_thread != null) {
+            self.setNotice("Action already in progress");
+            s.dirty = true;
+            return;
+        }
         const active_adapter = self.adapter() orelse {
             self.setNotice("No Bluetooth adapter");
             s.dirty = true;
@@ -372,6 +403,11 @@ pub const Bluetooth = struct {
     }
 
     fn toggleDiscovery(self: *Bluetooth, s: *session.Session) void {
+        if (self.action_thread != null) {
+            self.setNotice("Action already in progress");
+            s.dirty = true;
+            return;
+        }
         const active_adapter = self.adapter() orelse {
             self.setNotice("No Bluetooth adapter");
             s.dirty = true;
@@ -407,20 +443,58 @@ pub const Bluetooth = struct {
     }
 
     fn toggleConnection(self: *Bluetooth, s: *session.Session) void {
+        if (self.action_thread != null) {
+            self.setNotice("Action already in progress");
+            s.dirty = true;
+            return;
+        }
         const device = self.currentDevice() orelse return;
-        const client = if (self.client) |*value| value else return;
-        self.error_len = 0;
+        if (device.path.len > self.action_path.len) {
+            self.setNotice("Device path too long");
+            s.dirty = true;
+            return;
+        }
 
-        client.setConnected(device.*, !device.connected) catch |err| {
-            _ = self.refreshState();
-            self.ensureSelectionVisible(s);
-            self.setError("Connection change failed", err);
+        @memcpy(self.action_path[0..device.path.len], device.path);
+        self.action_path_len = device.path.len;
+        self.action_connect = !device.connected;
+        self.action_done.store(false, .release);
+        self.action_success.store(false, .release);
+        self.error_len = 0;
+        self.error_deadline_ms = 0;
+
+        self.action_thread = std.Thread.spawn(.{}, connectionWorker, .{self}) catch |err| {
+            self.setError("Could not start connection", err);
             s.dirty = true;
             return;
         };
-        _ = self.refreshState();
-        self.ensureSelectionVisible(s);
         s.dirty = true;
+    }
+
+    fn connectionWorker(self: *Bluetooth) void {
+        var success = false;
+        defer {
+            self.action_success.store(success, .release);
+            self.action_done.store(true, .release);
+        }
+
+        var client = bluetooth.Client.connect(self.io, self.gpa) catch return;
+        defer client.deinit();
+
+        const device = bluetooth.Device{
+            .path = self.action_path[0..self.action_path_len],
+            .adapter_path = "",
+            .name = "",
+            .address = "",
+        };
+        client.setConnected(device, self.action_connect) catch return;
+        success = true;
+    }
+
+    fn actionPendingFor(self: *Bluetooth, device: bluetooth.Device) bool {
+        if (self.action_thread == null or self.action_done.load(.acquire)) return false;
+        if (self.action_path_len != device.path.len) return false;
+        return std.mem.eql(u8, self.action_path[0..self.action_path_len], device.path);
     }
 
     fn listGeometry(_: *Bluetooth, s: *session.Session) ListGeometry {
@@ -640,8 +714,14 @@ pub const Bluetooth = struct {
                 output_scale,
             );
 
-            const status_text = device.stateLabel();
-            const status_color = if (device.connected)
+            const pending = self.actionPendingFor(device);
+            const status_text = if (pending)
+                (if (self.action_connect) "Connecting..." else "Disconnecting...")
+            else
+                device.stateLabel();
+            const status_color = if (pending)
+                cfg.warm_1
+            else if (device.connected)
                 cfg.accent
             else if (device.paired)
                 cfg.detail_1
