@@ -273,7 +273,22 @@ pub const Canvas = struct {
         img: *const png.Image,
         tint: Color,
     ) void {
-        if (w <= 0 or h <= 0 or img.width == 0 or img.height == 0 or tint.a == 0) return;
+        const stops = [_]Color{tint};
+        self.imageGradientTinted(x, y, w, h, img, &stops);
+    }
+
+    /// Draw a monochrome image with a horizontal gradient tint, preserving its
+    /// alpha. The gradient is sampled across the destination width.
+    pub fn imageGradientTinted(
+        self: *Canvas,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        img: *const png.Image,
+        stops: []const Color,
+    ) void {
+        if (w <= 0 or h <= 0 or img.width == 0 or img.height == 0 or stops.len == 0) return;
 
         const x0 = @max(self.clip_x0, x);
         const y0 = @max(self.clip_y0, y);
@@ -325,6 +340,12 @@ pub const Canvas = struct {
                     .b = @intCast(sum_b / sum_a),
                     .a = @intCast(sum_a / count),
                 };
+                const t = std.math.clamp(
+                    (@as(f32, @floatFromInt(px - x)) + 0.5) / @as(f32, @floatFromInt(w)),
+                    0.0,
+                    1.0,
+                );
+                const tint = sampleGradient(stops, t);
                 const tinted = Color{
                     .r = @intCast((@as(u32, color.r) * tint.r + 127) / 255),
                     .g = @intCast((@as(u32, color.g) * tint.g + 127) / 255),

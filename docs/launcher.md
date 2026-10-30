@@ -132,19 +132,20 @@ The colour roles are:
 | --- | --- | --- |
 | `base` | — | window background |
 | `surface` | — | search field and unselected rows |
-| `accent` | foam | search-field focus ring, text cursor, launcher icon, volume-gradient start |
-| `dark_accent` | pine | selected control-panel row and hover tint |
-| `detail_1` | rose | Wi-Fi icon |
-| `detail_2` | iris | audio secondary names, Bluetooth icon, fallback icon initials |
-| `warm_1` | gold | Power icon, inline “Coming soon” text, volume-gradient middle |
-| `warm_2` | love | Audio icon, volume-gradient end |
+| `accent` | foam | search-field focus ring, text cursor, icon-gradient start, volume-gradient start |
+| `dark_accent` | pine | inline “Coming soon” text and placeholder badge |
+| `detail_1` | rose | middle of the control-panel icon gradient |
+| `detail_2` | iris | end of the icon gradient, audio secondary names, fallback initials |
+| `warm_1` | gold | middle of the volume-bar gradient |
+| `warm_2` | love | end of the volume-bar gradient |
 | `text` | — | application/tool names and typed query |
 | `muted` | — | placeholder text, "No matches", footer hints |
-| `highlight_low` | — | hovered launcher row, fallback icon background |
+| `highlight_low` | — | hovered row, fallback icon background |
 | `highlight_mid` | — | window border |
-| `highlight_high` | — | selected launcher row |
+| `highlight_high` | — | selected row |
 
-`warm_1` and `warm_2` are the grouped warm accents (gold and love).
+`warm_1` and `warm_2` are the grouped warm accents (gold and love). All control
+panel icons share the same `accent → detail_1 → detail_2` gradient.
 
 ## Launcher controls
 

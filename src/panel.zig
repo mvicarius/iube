@@ -161,11 +161,10 @@ pub const Panel = struct {
             const row_y = geometry.y + @as(i32, @intCast(index)) * m.row_step;
             if (row_y + m.row_height > geometry.y + geometry.h) break;
 
-            const tool_color = tools.color(cfg, tool.color);
             const fill = if (self.selected == index)
-                cfg.dark_accent
+                cfg.highlight_high
             else if (self.hover == index)
-                cfg.dark_accent.withAlpha(90)
+                cfg.highlight_low
             else
                 cfg.surface;
 
@@ -183,7 +182,12 @@ pub const Panel = struct {
             const icon_px = ui.px(m.icon_size, output_scale);
 
             if (self.getIcon(index)) |image| {
-                canvas.imageTinted(icon_x, icon_y, icon_px, icon_px, image, tool_color);
+                const icon_gradient = [_]render.Color{
+                    cfg.accent,
+                    cfg.detail_1,
+                    cfg.detail_2,
+                };
+                canvas.imageGradientTinted(icon_x, icon_y, icon_px, icon_px, image, &icon_gradient);
             } else {
                 canvas.roundRect(
                     icon_x,
@@ -199,7 +203,7 @@ pub const Panel = struct {
                     icon_x + @divTrunc(icon_px - initial_width, 2),
                     icon_y + @divTrunc(icon_px - text_height, 2),
                     initial,
-                    tool_color,
+                    cfg.detail_2,
                     font_scale,
                 );
             }
@@ -238,7 +242,7 @@ pub const Panel = struct {
                     name_end + status_gap,
                     name_x + name_width - status_width,
                 );
-                _ = canvas.text(status_x, name_y, status_text, cfg.warm_1, font_scale);
+                _ = canvas.text(status_x, name_y, status_text, cfg.dark_accent, font_scale);
             }
         }
     }

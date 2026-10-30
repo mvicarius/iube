@@ -5,21 +5,10 @@
 //! not landed yet are marked `coming_soon` and open a placeholder view.
 
 const std = @import("std");
-const config = @import("config.zig");
-const render = @import("render.zig");
 
 pub const Status = enum {
     available,
     coming_soon,
-};
-
-pub const ColorRole = enum {
-    accent,
-    dark_accent,
-    detail_1,
-    detail_2,
-    warm_1,
-    warm_2,
 };
 
 pub const Tool = struct {
@@ -30,21 +19,9 @@ pub const Tool = struct {
     status: Status,
     /// Short note about the system interface the real implementation will use.
     backend: []const u8,
-    /// Embedded PNG, tinted with the tool's theme colour at runtime.
+    /// Embedded PNG, tinted with the panel's icon gradient at runtime.
     icon: []const u8,
-    color: ColorRole,
 };
-
-pub fn color(cfg: config.Config, role: ColorRole) render.Color {
-    return switch (role) {
-        .accent => cfg.accent,
-        .dark_accent => cfg.dark_accent,
-        .detail_1 => cfg.detail_1,
-        .detail_2 => cfg.detail_2,
-        .warm_1 => cfg.warm_1,
-        .warm_2 => cfg.warm_2,
-    };
-}
 
 pub const all = [_]Tool{
     .{
@@ -54,7 +31,6 @@ pub const all = [_]Tool{
         .status = .available,
         .backend = ".desktop entries, with the shared wl_shm renderer.",
         .icon = @embedFile("icons/rocket.png"),
-        .color = .accent,
     },
     .{
         .id = "audio",
@@ -63,7 +39,6 @@ pub const all = [_]Tool{
         .status = .available,
         .backend = "PulseAudio native protocol over the user socket.",
         .icon = @embedFile("icons/volume-high.png"),
-        .color = .warm_2,
     },
     .{
         .id = "bluetooth",
@@ -72,7 +47,6 @@ pub const all = [_]Tool{
         .status = .coming_soon,
         .backend = "BlueZ over the system D-Bus, plus rfkill/sysfs state.",
         .icon = @embedFile("icons/bluetooth.png"),
-        .color = .detail_2,
     },
     .{
         .id = "wifi",
@@ -81,7 +55,6 @@ pub const all = [_]Tool{
         .status = .coming_soon,
         .backend = "nl80211 generic netlink, with a wpa_supplicant control socket.",
         .icon = @embedFile("icons/wifi.png"),
-        .color = .detail_1,
     },
     .{
         .id = "power",
@@ -90,7 +63,6 @@ pub const all = [_]Tool{
         .status = .coming_soon,
         .backend = "sysfs power_supply/platform_profile and logind over D-Bus.",
         .icon = @embedFile("icons/power-off.png"),
-        .color = .warm_1,
     },
 };
 
